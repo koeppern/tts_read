@@ -1,0 +1,20 @@
+{
+  "hotkeys": {
+    "deSpeak": "ctrl+1",
+    "enSpeak": "ctrl+2",
+    "pauseResume": "ctrl+3"
+  },
+  "voices": {
+    "ctrl+1": {
+      "engine": "SAPI",
+      "voice": "Microsoft Hedda Desktop",
+      "rate": 1.0
+    },
+    "ctrl+2": {
+      "engine": "SAPI",
+      "voice": "Microsoft Zira Desktop",
+      "rate": 1.0
+    }
+  },
+  "startup": false
+}

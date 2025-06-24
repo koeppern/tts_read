@@ -1,0 +1,112 @@
+import keyboard
+from typing import Dict, Callable, Optional
+import threading
+
+
+class HotkeyListener:
+    """Manages global hotkey registration and callbacks."""
+    
+    def __init__(self):
+        """Initialize hotkey listener."""
+        self._hotkeys: Dict[str, int] = {}  # hotkey -> handler_id mapping
+        self._callbacks: Dict[str, Callable] = {}  # hotkey -> callback mapping
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        
+    def register_hotkey(self, hotkey: str, callback: Callable) -> bool:
+        """Register a global hotkey with a callback function.
+        
+        Args:
+            hotkey: Hotkey combination (e.g., "ctrl+1")
+            callback: Function to call when hotkey is pressed
+            
+        Returns:
+            True if registration successful, False otherwise
+        """
+        try:
+            # Normalize hotkey string
+            normalized_hotkey = hotkey.lower().replace(" ", "")
+            
+            # Unregister if already exists
+            if normalized_hotkey in self._hotkeys:
+                self.unregister_hotkey(normalized_hotkey)
+                
+            # Register new hotkey
+            handler_id = keyboard.add_hotkey(normalized_hotkey, callback)
+            self._hotkeys[normalized_hotkey] = handler_id
+            self._callbacks[normalized_hotkey] = callback
+            
+            print(f"Registered hotkey: {normalized_hotkey}")
+            return True
+            
+        except Exception as e:
+            print(f"Failed to register hotkey {hotkey}: {e}")
+            return False
+            
+    def unregister_hotkey(self, hotkey: str) -> bool:
+        """Unregister a previously registered hotkey.
+        
+        Args:
+            hotkey: Hotkey combination to unregister
+            
+        Returns:
+            True if unregistration successful, False otherwise
+        """
+        try:
+            normalized_hotkey = hotkey.lower().replace(" ", "")
+            
+            if normalized_hotkey in self._hotkeys:
+                keyboard.remove_hotkey(self._hotkeys[normalized_hotkey])
+                del self._hotkeys[normalized_hotkey]
+                del self._callbacks[normalized_hotkey]
+                print(f"Unregistered hotkey: {normalized_hotkey}")
+                return True
+            return False
+            
+        except Exception as e:
+            print(f"Failed to unregister hotkey {hotkey}: {e}")
+            return False
+            
+    def unregister_all(self) -> None:
+        """Unregister all hotkeys."""
+        hotkeys_to_remove = list(self._hotkeys.keys())
+        for hotkey in hotkeys_to_remove:
+            self.unregister_hotkey(hotkey)
+            
+    def start(self) -> None:
+        """Start listening for hotkeys in a background thread."""
+        if not self._running:
+            self._running = True
+            self._thread = threading.Thread(target=self._listen_loop, daemon=True)
+            self._thread.start()
+            print("Hotkey listener started")
+            
+    def _listen_loop(self) -> None:
+        """Main listening loop (runs in background thread)."""
+        try:
+            # keyboard.wait() will block and handle events
+            while self._running:
+                keyboard.wait()
+        except Exception as e:
+            print(f"Hotkey listener error: {e}")
+            self._running = False
+            
+    def stop(self) -> None:
+        """Stop listening for hotkeys."""
+        if self._running:
+            self._running = False
+            self.unregister_all()
+            # Trigger keyboard event to unblock wait()
+            try:
+                keyboard.press_and_release('esc')
+            except:
+                pass
+            print("Hotkey listener stopped")
+            
+    def is_running(self) -> bool:
+        """Check if listener is currently running."""
+        return self._running
+        
+    def get_registered_hotkeys(self) -> list:
+        """Get list of currently registered hotkeys."""
+        return list(self._hotkeys.keys())
