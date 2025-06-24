@@ -2,9 +2,15 @@ import sys
 import os
 import subprocess
 from pathlib import Path
-import pystray
-from PIL import Image, ImageDraw
+import platform
+try:
+    import pystray
+    from PIL import Image, ImageDraw
+    PYSTRAY_AVAILABLE = True
+except ImportError:
+    PYSTRAY_AVAILABLE = False
 from threading import Thread
+import time
 
 from settings_manager import SettingsManager
 from text_speaker import TextSpeakerFactory
@@ -17,9 +23,13 @@ class VorleseApp:
     
     def __init__(self):
         """Initialize the application."""
+        print("Initializing VorleseApp...")
         self.settings_manager = SettingsManager()
+        print("Settings manager created")
         self.clipboard_reader = ClipboardReader()
+        print("Clipboard reader created")
         self.hotkey_listener = HotkeyListener()
+        print("Hotkey listener created")
         
         # Create text speakers for each configured voice
         self.speakers = {}
@@ -128,10 +138,12 @@ class VorleseApp:
             
     def _create_menu(self):
         """Create system tray menu."""
-        return pystray.Menu(
-            pystray.MenuItem("Einstellungen öffnen", self._open_settings),
-            pystray.MenuItem("Beenden", self._quit_app)
-        )
+        if PYSTRAY_AVAILABLE:
+            return pystray.Menu(
+                pystray.MenuItem("Einstellungen öffnen", self._open_settings),
+                pystray.MenuItem("Beenden", self._quit_app)
+            )
+        return None
         
     def run(self):
         """Run the application."""
@@ -143,22 +155,35 @@ class VorleseApp:
         # Start hotkey listener
         self.hotkey_listener.start()
         
-        # Create and run system tray icon
-        icon_image = self._create_tray_icon()
-        self.icon = pystray.Icon(
-            "VorleseApp",
-            icon_image,
-            "Vorlese-App",
-            menu=self._create_menu()
-        )
-        
-        print("App is running. Check system tray for icon.")
+        print("TTS Vorlese-App is running.")
         print("Hotkeys registered:")
         for hotkey in self.hotkey_listener.get_registered_hotkeys():
             print(f"  - {hotkey}")
-            
-        # Run icon (this blocks)
-        self.icon.run()
+        
+        # Check if we can use system tray
+        use_tray = PYSTRAY_AVAILABLE and platform.system() == "Windows"
+        
+        if use_tray:
+            # Create and run system tray icon
+            icon_image = self._create_tray_icon()
+            self.icon = pystray.Icon(
+                "VorleseApp",
+                icon_image,
+                "Vorlese-App",
+                menu=self._create_menu()
+            )
+            print("Check system tray for icon.")
+            # Run icon (this blocks)
+            self.icon.run()
+        else:
+            # Run without system tray
+            print("\nRunning in console mode (no system tray).")
+            print("Press Ctrl+C to exit.")
+            try:
+                while self._is_running:
+                    time.sleep(1)
+            except KeyboardInterrupt:
+                self._is_running = False
         
     def cleanup(self):
         """Clean up resources."""

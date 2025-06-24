@@ -1,6 +1,18 @@
-import keyboard
+import platform
+import sys
 from typing import Dict, Callable, Optional
 import threading
+
+# Handle keyboard import with better error messages
+try:
+    import keyboard
+    KEYBOARD_AVAILABLE = True
+except ImportError:
+    KEYBOARD_AVAILABLE = False
+    print("WARNING: keyboard module not available")
+except Exception as e:
+    KEYBOARD_AVAILABLE = False
+    print(f"WARNING: keyboard module error: {e}")
 
 
 class HotkeyListener:
@@ -12,6 +24,13 @@ class HotkeyListener:
         self._callbacks: Dict[str, Callable] = {}  # hotkey -> callback mapping
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._dummy_mode = not KEYBOARD_AVAILABLE or platform.system() == "Linux"
+        
+        if self._dummy_mode:
+            print("WARNING: Hotkey listener running in dummy mode.")
+            if platform.system() == "Linux":
+                print("Note: Global hotkeys typically require root privileges on Linux.")
+                print("Consider running with sudo or using a different hotkey solution.")
         
     def register_hotkey(self, hotkey: str, callback: Callable) -> bool:
         """Register a global hotkey with a callback function.
@@ -32,11 +51,16 @@ class HotkeyListener:
                 self.unregister_hotkey(normalized_hotkey)
                 
             # Register new hotkey
-            handler_id = keyboard.add_hotkey(normalized_hotkey, callback)
-            self._hotkeys[normalized_hotkey] = handler_id
-            self._callbacks[normalized_hotkey] = callback
-            
-            print(f"Registered hotkey: {normalized_hotkey}")
+            if self._dummy_mode:
+                # In dummy mode, just store the callback
+                self._hotkeys[normalized_hotkey] = -1  # Dummy ID
+                self._callbacks[normalized_hotkey] = callback
+                print(f"Registered hotkey (dummy mode): {normalized_hotkey}")
+            else:
+                handler_id = keyboard.add_hotkey(normalized_hotkey, callback)
+                self._hotkeys[normalized_hotkey] = handler_id
+                self._callbacks[normalized_hotkey] = callback
+                print(f"Registered hotkey: {normalized_hotkey}")
             return True
             
         except Exception as e:
@@ -56,7 +80,8 @@ class HotkeyListener:
             normalized_hotkey = hotkey.lower().replace(" ", "")
             
             if normalized_hotkey in self._hotkeys:
-                keyboard.remove_hotkey(self._hotkeys[normalized_hotkey])
+                if not self._dummy_mode:
+                    keyboard.remove_hotkey(self._hotkeys[normalized_hotkey])
                 del self._hotkeys[normalized_hotkey]
                 del self._callbacks[normalized_hotkey]
                 print(f"Unregistered hotkey: {normalized_hotkey}")
@@ -83,13 +108,19 @@ class HotkeyListener:
             
     def _listen_loop(self) -> None:
         """Main listening loop (runs in background thread)."""
-        try:
-            # keyboard.wait() will block and handle events
+        if self._dummy_mode:
+            # In dummy mode, just sleep
+            import time
             while self._running:
-                keyboard.wait()
-        except Exception as e:
-            print(f"Hotkey listener error: {e}")
-            self._running = False
+                time.sleep(1)
+        else:
+            try:
+                # keyboard.wait() will block and handle events
+                while self._running:
+                    keyboard.wait()
+            except Exception as e:
+                print(f"Hotkey listener error: {e}")
+                self._running = False
             
     def stop(self) -> None:
         """Stop listening for hotkeys."""
@@ -97,10 +128,11 @@ class HotkeyListener:
             self._running = False
             self.unregister_all()
             # Trigger keyboard event to unblock wait()
-            try:
-                keyboard.press_and_release('esc')
-            except:
-                pass
+            if not self._dummy_mode:
+                try:
+                    keyboard.press_and_release('esc')
+                except:
+                    pass
             print("Hotkey listener stopped")
             
     def is_running(self) -> bool:
