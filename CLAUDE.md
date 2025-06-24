@@ -77,3 +77,6 @@ As this is a newly initialized project, the architecture will evolve. Based on t
 2. **Markdown Processing**: The `src/markdown_converter.py` module will handle conversion between HTML and Markdown formats
 3. **Configuration-Driven**: All settings, prompts, and variables will be externalized to `config/` YAML files
 4. **Report Generation**: Support for mixed HTML/Markdown content in report sections using dictionary structures
+
+## Virtual Environment Guidelines
+- Use virtual environment in folder `.venv`

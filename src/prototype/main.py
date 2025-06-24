@@ -7,7 +7,7 @@ try:
     import pystray
     from PIL import Image, ImageDraw
     PYSTRAY_AVAILABLE = True
-except ImportError:
+except (ImportError, ValueError):
     PYSTRAY_AVAILABLE = False
 from threading import Thread
 import time
@@ -60,6 +60,8 @@ class VorleseApp:
         
     def _on_speak_hotkey(self, hotkey: str):
         """Handle speak hotkey press."""
+        print(f"Detected hotkey: {hotkey}")
+        
         # Get clipboard text
         text = self.clipboard_reader.get_clipboard_text()
         if not text:
@@ -87,18 +89,29 @@ class VorleseApp:
         
     def _on_pause_resume_hotkey(self):
         """Handle pause/resume hotkey press."""
-        # Find active speaker
+        print("Detected pause/resume hotkey")
+        
+        # Check if any speaker is currently speaking (not paused)
+        active_speaker = None
+        paused_speaker = None
+        
         for speaker in self.speakers.values():
             if speaker.is_speaking():
-                speaker.pause()
-                print("Speech paused")
-                return
+                active_speaker = speaker
+                break
+            elif hasattr(speaker, '_is_paused') and speaker._is_paused:
+                paused_speaker = speaker
                 
-        # If no speaker is active, try to resume
-        for speaker in self.speakers.values():
-            speaker.resume()
+        if active_speaker:
+            # Pause the active speaker
+            active_speaker.pause()
+            print("Speech paused")
+        elif paused_speaker:
+            # Resume the paused speaker
+            paused_speaker.resume()
             print("Speech resumed")
-            break
+        else:
+            print("No active or paused speech found")
             
     def _register_hotkeys(self):
         """Register all configured hotkeys."""

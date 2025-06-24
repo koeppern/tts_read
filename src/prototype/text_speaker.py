@@ -42,6 +42,7 @@ class SAPITextSpeaker(TextSpeakerInterface):
         self.engine = None
         self._use_dummy = False
         self._is_paused = False
+        self._is_speaking = False
         self._current_text = ""
         self._speaking_thread = None
         self._lock = threading.Lock()
@@ -105,6 +106,7 @@ class SAPITextSpeaker(TextSpeakerInterface):
                 
             self._current_text = text
             self._is_paused = False
+            self._is_speaking = True
             
             if not self._use_dummy:
                 # Configure voice
@@ -125,33 +127,37 @@ class SAPITextSpeaker(TextSpeakerInterface):
             
     def _speak_text(self, text: str) -> None:
         """Internal method to speak text."""
-        if self._use_dummy:
-            print(f"[DUMMY TTS] Speaking: {text[:50]}..." if len(text) > 50 else f"[DUMMY TTS] Speaking: {text}")
-            # Simulate speaking time
-            import time
-            time.sleep(min(len(text) * 0.01, 5))  # Simulate speech duration
-            return
-            
         try:
-            self.engine.say(text)
-            self.engine.runAndWait()
+            if self._use_dummy:
+                print(f"[DUMMY TTS] Speaking: {text[:50]}..." if len(text) > 50 else f"[DUMMY TTS] Speaking: {text}")
+                # Simulate speaking time
+                import time
+                time.sleep(min(len(text) * 0.01, 5))  # Simulate speech duration
+            else:
+                self.engine.say(text)
+                self.engine.runAndWait()
         except Exception as e:
             print(f"Error during speech: {e}")
+        finally:
+            with self._lock:
+                self._is_speaking = False
             
     def pause(self) -> None:
         """Pause current speech."""
         with self._lock:
-            if self.is_speaking() and not self._is_paused:
+            if self._is_speaking and not self._is_paused:
                 # pyttsx3 doesn't have built-in pause, so we stop and save position
                 self._is_paused = True
                 if not self._use_dummy and self.engine:
                     self.engine.stop()
+                print("TTS Engine paused")
                 
     def resume(self) -> None:
         """Resume paused speech."""
         with self._lock:
             if self._is_paused and self._current_text:
                 self._is_paused = False
+                self._is_speaking = True
                 # Resume by speaking the remaining text
                 # Note: This is a simplified implementation
                 self._speaking_thread = threading.Thread(
@@ -160,6 +166,7 @@ class SAPITextSpeaker(TextSpeakerInterface):
                 )
                 self._speaking_thread.daemon = True
                 self._speaking_thread.start()
+                print("TTS Engine resumed")
                 
     def stop(self) -> None:
         """Stop current speech."""
@@ -168,11 +175,11 @@ class SAPITextSpeaker(TextSpeakerInterface):
                 self.engine.stop()
             self._current_text = ""
             self._is_paused = False
+            self._is_speaking = False
             
     def is_speaking(self) -> bool:
         """Check if currently speaking."""
-        return (self._speaking_thread is not None and 
-                self._speaking_thread.is_alive())
+        return self._is_speaking
                 
 
 class TextSpeakerFactory:
