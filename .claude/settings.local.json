@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(python:*)",
+      "Bash(sudo apt-get:*)",
+      "Bash(sudo apt-get install:*)",
+      "Bash(timeout 10 python src/prototype/main.py 2>&1)",
+      "Bash(timeout 5 strace -e trace=file python:*)",
+      "Bash(pip install:*)",
+      "Bash(git reset:*)",
+      "Bash(rm:*)"
+    ],
+    "deny": []
+  }
+}

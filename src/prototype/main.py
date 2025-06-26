@@ -16,6 +16,7 @@ from settings_manager import SettingsManager
 from text_speaker import TextSpeakerFactory
 from clipboard_reader import ClipboardReader
 from hotkey_listener import HotkeyListener
+from text_selector import TextSelector
 
 
 class VorleseApp:
@@ -28,6 +29,8 @@ class VorleseApp:
         print("Settings manager created")
         self.clipboard_reader = ClipboardReader()
         print("Clipboard reader created")
+        self.text_selector = TextSelector()
+        print("Text selector created")
         self.hotkey_listener = HotkeyListener()
         print("Hotkey listener created")
         
@@ -41,14 +44,23 @@ class VorleseApp:
         
     def _init_speakers(self):
         """Initialize text speakers based on configuration."""
-        hotkeys = self.settings_manager.get_hotkeys()
+        # Print available SAPI voices on startup
+        print("🔊 Available SAPI Voices:")
+        temp_speaker = TextSpeakerFactory.create_speaker("SAPI")
+        available_voices = temp_speaker.get_available_voices()
+        for i, voice in enumerate(available_voices):
+            print(f"   {i+1}. {voice}")
+        print()
         
-        for action, hotkey in hotkeys.items():
-            if action in ["deSpeak", "enSpeak"]:
-                voice_config = self.settings_manager.get_voice_config(hotkey)
-                if voice_config:
-                    engine_type = voice_config.get("engine", "SAPI")
-                    self.speakers[hotkey] = TextSpeakerFactory.create_speaker(engine_type)
+        # Print current configuration
+        self.settings_manager.print_configuration()
+        
+        # Initialize speakers for enabled actions
+        enabled_actions = self.settings_manager.get_enabled_actions()
+        for action, action_config in enabled_actions.items():
+            engine_type = action_config.get("engine", "SAPI")
+            self.speakers[action] = TextSpeakerFactory.create_speaker(engine_type)
+            print(f"✅ Initialized speaker for {action} ({action_config.get('name', 'Unnamed')})")
                     
     def _create_tray_icon(self):
         """Create a simple placeholder icon for the system tray."""
@@ -60,80 +72,125 @@ class VorleseApp:
         
     def _on_speak_hotkey(self, hotkey: str):
         """Handle speak hotkey press."""
-        print(f"Detected hotkey: {hotkey}")
+        print(f"🔥 HOTKEY PRESSED: {hotkey} (speak)")
         
-        # Get clipboard text
+        # Get action for this hotkey
+        action = self.settings_manager.get_action_for_hotkey(hotkey)
+        if not action:
+            print(f"❌ No action mapped to hotkey {hotkey}")
+            return
+            
+        # Get action configuration
+        action_config = self.settings_manager.get_action_config(action)
+        if not action_config:
+            print(f"❌ No configuration for action {action}")
+            return
+            
+        if not action_config.get("enabled", False):
+            print(f"❌ Action {action} is disabled")
+            return
+            
+        print(f"🎯 Action: {action} ({action_config.get('name', 'Unnamed')})")
+        
+        # First try to copy selected text
+        print("📋 Attempting to copy selected text...")
+        copy_success = self.text_selector.copy_selected_text()
+        
+        # Get text from clipboard (either newly copied or existing)
         text = self.clipboard_reader.get_clipboard_text()
         if not text:
-            print("No text in clipboard")
+            print("❌ No text in clipboard and no text selected")
             return
             
-        # Get voice configuration
-        voice_config = self.settings_manager.get_voice_config(hotkey)
-        if not voice_config:
-            print(f"No voice configuration for {hotkey}")
-            return
-            
+        if not copy_success:
+            print(f"📋 Using existing clipboard text: {text[:50]}...")
+        else:
+            print(f"📋 Using copied text: {text[:50]}...")
+        
+        print(f"⚙️ Action config: {action_config}")
+        
         # Get speaker
-        speaker = self.speakers.get(hotkey)
+        speaker = self.speakers.get(action)
         if not speaker:
-            print(f"No speaker initialized for {hotkey}")
+            print(f"❌ No speaker initialized for action {action}")
             return
             
         # Speak the text
-        voice_name = voice_config.get("voice", "")
-        rate = voice_config.get("rate", 1.0)
+        voice_name = action_config.get("voice", "")
+        rate = action_config.get("rate", 1.0)
+        speed = action_config.get("speed", 1.0)
         
-        print(f"Speaking text with {voice_name} at rate {rate}")
-        speaker.speak(text, voice_name, rate)
+        print(f"🔊 Speaking text with {voice_name} at rate {rate}, speed {speed}")
+        speaker.speak(text, voice_name, rate * speed)  # Combine rate and speed
         
     def _on_pause_resume_hotkey(self):
         """Handle pause/resume hotkey press."""
-        print("Detected pause/resume hotkey")
+        print("🔥 HOTKEY PRESSED: PAUSE/RESUME")
         
-        # Check if any speaker is currently speaking (not paused)
+        # Check if any speaker is currently speaking or paused
         active_speaker = None
         paused_speaker = None
         
-        for speaker in self.speakers.values():
-            if speaker.is_speaking():
+        print("🔍 Checking speaker states:")
+        for action, speaker in self.speakers.items():
+            is_speaking = speaker.is_speaking()
+            is_paused = getattr(speaker, '_is_paused', False)
+            action_config = self.settings_manager.get_action_config(action)
+            action_name = action_config.get('name', action)
+            print(f"   {action} ({action_name}): speaking={is_speaking}, paused={is_paused}")
+            
+            if is_speaking and not is_paused:
                 active_speaker = speaker
+                print(f"   → Found active speaker: {action} ({action_name})")
                 break
-            elif hasattr(speaker, '_is_paused') and speaker._is_paused:
+            elif is_paused:
                 paused_speaker = speaker
+                print(f"   → Found paused speaker: {action} ({action_name})")
+                break
                 
         if active_speaker:
             # Pause the active speaker
+            print("⏸️ Pausing speech...")
             active_speaker.pause()
-            print("Speech paused")
+            print("✅ Speech paused")
         elif paused_speaker:
             # Resume the paused speaker
+            print("▶️ Resuming speech...")
             paused_speaker.resume()
-            print("Speech resumed")
+            print("✅ Speech resumed")
         else:
-            print("No active or paused speech found")
+            print("❌ No active or paused speech found")
             
     def _register_hotkeys(self):
         """Register all configured hotkeys."""
         hotkeys = self.settings_manager.get_hotkeys()
+        print(f"🔧 Registering hotkeys: {hotkeys}")
         
-        # Register speak hotkeys
+        # Register hotkeys for all actions
         for action, hotkey in hotkeys.items():
-            if action == "deSpeak":
-                self.hotkey_listener.register_hotkey(
-                    hotkey, 
-                    lambda h=hotkey: self._on_speak_hotkey(h)
-                )
-            elif action == "enSpeak":
-                self.hotkey_listener.register_hotkey(
-                    hotkey,
-                    lambda h=hotkey: self._on_speak_hotkey(h)
-                )
-            elif action == "pauseResume":
-                self.hotkey_listener.register_hotkey(
+            print(f"🔧 Registering {action} -> {hotkey}")
+            
+            if action == "action_pause":
+                # Special case for pause/resume
+                success = self.hotkey_listener.register_hotkey(
                     hotkey,
                     self._on_pause_resume_hotkey
                 )
+                print(f"   ✅ {action} ({hotkey}): {'Success' if success else 'Failed'}")
+            elif action.startswith("action_"):
+                # Regular speak actions
+                action_config = self.settings_manager.get_action_config(action)
+                if action_config.get("enabled", False):
+                    success = self.hotkey_listener.register_hotkey(
+                        hotkey,
+                        lambda h=hotkey: self._on_speak_hotkey(h)
+                    )
+                    action_name = action_config.get('name', action)
+                    print(f"   ✅ {action} ({action_name}) - {hotkey}: {'Success' if success else 'Failed'}")
+                else:
+                    print(f"   ⏸️ {action} - {hotkey}: Disabled")
+            else:
+                print(f"   ❓ Unknown action type: {action}")
                 
     def _open_settings(self):
         """Open settings file in default text editor."""

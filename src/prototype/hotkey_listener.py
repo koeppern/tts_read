@@ -7,12 +7,13 @@ import threading
 try:
     import keyboard
     KEYBOARD_AVAILABLE = True
+    print("✅ Keyboard module imported successfully")
 except ImportError:
     KEYBOARD_AVAILABLE = False
-    print("WARNING: keyboard module not available")
+    print("❌ WARNING: keyboard module not available")
 except Exception as e:
     KEYBOARD_AVAILABLE = False
-    print(f"WARNING: keyboard module error: {e}")
+    print(f"❌ WARNING: keyboard module error: {e}")
 
 
 class HotkeyListener:
@@ -24,13 +25,23 @@ class HotkeyListener:
         self._callbacks: Dict[str, Callable] = {}  # hotkey -> callback mapping
         self._running = False
         self._thread: Optional[threading.Thread] = None
-        self._dummy_mode = not KEYBOARD_AVAILABLE or platform.system() == "Linux"
+        # Only use dummy mode if keyboard is not available
+        # Don't automatically use dummy mode on Linux - let it try first
+        self._dummy_mode = not KEYBOARD_AVAILABLE
+        
+        print(f"🔧 Platform: {platform.system()}")
+        print(f"🔧 Keyboard available: {KEYBOARD_AVAILABLE}")
+        print(f"🔧 Dummy mode: {self._dummy_mode}")
         
         if self._dummy_mode:
-            print("WARNING: Hotkey listener running in dummy mode.")
+            print("⚠️ WARNING: Hotkey listener running in dummy mode.")
+            if not KEYBOARD_AVAILABLE:
+                print("   Reason: keyboard module not available")
             if platform.system() == "Linux":
-                print("Note: Global hotkeys typically require root privileges on Linux.")
-                print("Consider running with sudo or using a different hotkey solution.")
+                print("   Note: Global hotkeys typically require root privileges on Linux.")
+                print("   Consider running with sudo or using a different hotkey solution.")
+        else:
+            print("✅ Hotkey listener ready for real hotkey detection")
         
     def register_hotkey(self, hotkey: str, callback: Callable) -> bool:
         """Register a global hotkey with a callback function.
@@ -55,12 +66,18 @@ class HotkeyListener:
                 # In dummy mode, just store the callback
                 self._hotkeys[normalized_hotkey] = -1  # Dummy ID
                 self._callbacks[normalized_hotkey] = callback
-                print(f"Registered hotkey (dummy mode): {normalized_hotkey}")
+                print(f"🔧 Registered hotkey (dummy mode): {normalized_hotkey}")
             else:
-                handler_id = keyboard.add_hotkey(normalized_hotkey, callback)
-                self._hotkeys[normalized_hotkey] = handler_id
-                self._callbacks[normalized_hotkey] = callback
-                print(f"Registered hotkey: {normalized_hotkey}")
+                try:
+                    handler_id = keyboard.add_hotkey(normalized_hotkey, callback)
+                    self._hotkeys[normalized_hotkey] = handler_id
+                    self._callbacks[normalized_hotkey] = callback
+                    print(f"✅ Registered hotkey: {normalized_hotkey}")
+                except Exception as e:
+                    print(f"❌ Failed to register hotkey {normalized_hotkey}: {e}")
+                    if "access" in str(e).lower() or "permission" in str(e).lower():
+                        print("   💡 Try running as administrator for global hotkeys")
+                    return False
             return True
             
         except Exception as e:
