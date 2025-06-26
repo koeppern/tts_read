@@ -13,7 +13,7 @@ from threading import Thread
 import time
 
 from settings_manager import SettingsManager
-from text_speaker import TextSpeakerFactory
+from text_speaker_v2 import TextSpeakerFactory
 from clipboard_reader import ClipboardReader
 from hotkey_listener import HotkeyListener
 from text_selector import TextSelector
@@ -42,10 +42,14 @@ class VorleseApp:
         self.icon = None
         self._is_running = True
         
+        # Register cleanup on exit
+        import atexit
+        atexit.register(self.cleanup)
+        
     def _init_speakers(self):
         """Initialize text speakers based on configuration."""
         # Print available SAPI voices on startup
-        print("🔊 Available SAPI Voices:")
+        print("🔊 Available SAPI Voices (NBSapi):")
         temp_speaker = TextSpeakerFactory.create_speaker("SAPI")
         available_voices = temp_speaker.get_available_voices()
         for i, voice in enumerate(available_voices):
@@ -60,7 +64,10 @@ class VorleseApp:
         for action, action_config in enabled_actions.items():
             engine_type = action_config.get("engine", "SAPI")
             self.speakers[action] = TextSpeakerFactory.create_speaker(engine_type)
-            print(f"✅ Initialized speaker for {action} ({action_config.get('name', 'Unnamed')})")
+            print(f"✅ Initialized NBSapi speaker for {action} ({action_config.get('name', 'Unnamed')})")
+            
+        # Cleanup temp speaker
+        temp_speaker.cleanup()
                     
     def _create_tray_icon(self):
         """Create a simple placeholder icon for the system tray."""
@@ -257,9 +264,21 @@ class VorleseApp:
         
     def cleanup(self):
         """Clean up resources."""
-        self.hotkey_listener.stop()
-        for speaker in self.speakers.values():
-            speaker.stop()
+        print("🧹 VorleseApp cleanup...")
+        try:
+            # Stop hotkey listener
+            if hasattr(self, 'hotkey_listener'):
+                self.hotkey_listener.stop()
+                
+            # Cleanup all speakers
+            if hasattr(self, 'speakers'):
+                for action, speaker in self.speakers.items():
+                    print(f"🧹 Cleaning up speaker: {action}")
+                    speaker.cleanup()
+                    
+            print("✅ VorleseApp cleanup completed")
+        except Exception as e:
+            print(f"❌ Error during cleanup: {e}")
             
 
 def main():
