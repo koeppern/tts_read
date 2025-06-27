@@ -3,6 +3,8 @@ import os
 import subprocess
 from pathlib import Path
 import platform
+import signal
+import threading
 try:
     import pystray
     from PIL import Image, ImageDraw
@@ -13,11 +15,25 @@ from threading import Thread
 import time
 
 from settings_manager import SettingsManager
-from text_speaker_v2 import TextSpeakerFactory
+from text_speaker_v2 import TextSpeakerFactory, startup_cleanup, kill_previous_instances_fast, cleanup_all_speech_threads
 from clipboard_reader import ClipboardReader
 from hotkey_listener import HotkeyListener
 from text_selector import TextSelector
 
+# Global flag for graceful shutdown
+_shutdown_requested = False
+
+def signal_handler(signum, frame):
+	"""Handle system signals for graceful shutdown."""
+	global _shutdown_requested
+	print(f"\n📡 Received signal {signum} - initiating graceful shutdown...")
+	_shutdown_requested = True
+
+# Register signal handlers
+if hasattr(signal, 'SIGTERM'):
+	signal.signal(signal.SIGTERM, signal_handler)
+if hasattr(signal, 'SIGINT'):
+	signal.signal(signal.SIGINT, signal_handler)
 
 class VorleseApp:
     """Main application class for the TTS hotkey app."""
@@ -25,6 +41,10 @@ class VorleseApp:
     def __init__(self):
         """Initialize the application."""
         print("Initializing VorleseApp...")
+        
+        # First, cleanup any previous instances and threads
+        startup_cleanup()
+        
         self.settings_manager = SettingsManager()
         print("Settings manager created")
         self.clipboard_reader = ClipboardReader()
@@ -237,29 +257,61 @@ class VorleseApp:
         for hotkey in self.hotkey_listener.get_registered_hotkeys():
             print(f"  - {hotkey}")
         
-        # Check if we can use system tray
-        use_tray = PYSTRAY_AVAILABLE and platform.system() == "Windows"
+        # Check if we can use system tray (or force console mode)
+        force_console = os.getenv('VORLESE_CONSOLE_MODE', '').lower() in ('1', 'true', 'yes')
+        use_tray = PYSTRAY_AVAILABLE and platform.system() == "Windows" and not force_console
+        
+        print(f"🔧 System tray available: {PYSTRAY_AVAILABLE}")
+        print(f"🔧 Platform: {platform.system()}")
+        print(f"🔧 Force console mode: {force_console}")
+        print(f"🔧 Will use system tray: {use_tray}")
         
         if use_tray:
             # Create and run system tray icon
-            icon_image = self._create_tray_icon()
-            self.icon = pystray.Icon(
-                "VorleseApp",
-                icon_image,
-                "Vorlese-App",
-                menu=self._create_menu()
-            )
-            print("Check system tray for icon.")
-            # Run icon (this blocks)
-            self.icon.run()
-        else:
-            # Run without system tray
-            print("\nRunning in console mode (no system tray).")
-            print("Press Ctrl+C to exit.")
             try:
-                while self._is_running:
-                    time.sleep(1)
+                icon_image = self._create_tray_icon()
+                self.icon = pystray.Icon(
+                    "VorleseApp",
+                    icon_image,
+                    "Vorlese-App",
+                    menu=self._create_menu()
+                )
+                print("✅ System tray icon created.")
+                print("📍 Check system tray for the Vorlese-App icon.")
+                print("📍 Right-click the icon to access settings or quit.")
+                print("📍 The application is now running in the background.")
+                
+                # Run icon (this blocks until icon is stopped)
+                self.icon.run()
+                print("✅ System tray icon stopped.")
+                
+            except Exception as e:
+                print(f"❌ Error with system tray: {e}")
+                print("🔄 Falling back to console mode...")
+                use_tray = False
+        
+        if not use_tray:
+            # Run without system tray
+            print("\n" + "="*50)
+            print("🖥️  CONSOLE MODE")
+            print("="*50)
+            print("📍 The application is running in console mode.")
+            print("📍 Hotkeys are active and ready to use:")
+            for hotkey in self.hotkey_listener.get_registered_hotkeys():
+                print(f"   - {hotkey}")
+            print("📍 Press Ctrl+C to exit the application.")
+            print("="*50)
+            
+            try:
+                while self._is_running and not _shutdown_requested:
+                    time.sleep(0.5)  # More responsive to shutdown signals
+                    
+                if _shutdown_requested:
+                    print("\n📍 Shutdown requested by system signal...")
+                    self._is_running = False
+                    
             except KeyboardInterrupt:
+                print("\n📍 Shutdown requested by user...")
                 self._is_running = False
         
     def cleanup(self):
@@ -282,14 +334,51 @@ class VorleseApp:
             
 
 def main():
-    """Main entry point."""
-    app = VorleseApp()
+    """Main entry point with fallback kill mechanism."""
+    app = None
+    startup_successful = False
+    
     try:
+        print("🚀 Starting Vorlese-App...")
+        app = VorleseApp()
+        startup_successful = True
+        print("✅ App initialization successful")
+        
         app.run()
+        
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        print("\n📍 Shutdown requested by user...")
+        
+    except Exception as e:
+        print(f"❌ Critical error during startup/runtime: {e}")
+        print("🔄 Attempting emergency cleanup...")
+        
+        # Emergency fallback kill - if startup failed, try aggressive cleanup
+        if not startup_successful:
+            print("💀 Startup failed - executing emergency force kill...")
+            try:
+                kill_previous_instances_fast()
+                print("✅ Emergency force kill completed")
+            except Exception as kill_error:
+                print(f"❌ Emergency kill also failed: {kill_error}")
+                print("⚠️ Manual cleanup may be required (Task Manager)")
+        
     finally:
-        app.cleanup()
+        print("🧹 Final cleanup...")
+        if app:
+            try:
+                app.cleanup()
+            except Exception as cleanup_error:
+                print(f"❌ Cleanup error: {cleanup_error}")
+        
+        # Final safety net - ensure all our processes are cleaned up
+        try:
+            cleanup_all_speech_threads()
+            print("✅ Final thread cleanup completed")
+        except Exception as thread_cleanup_error:
+            print(f"❌ Thread cleanup error: {thread_cleanup_error}")
+        
+        print("👋 Vorlese-App shutdown complete")
         
 
 if __name__ == "__main__":

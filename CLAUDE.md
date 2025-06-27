@@ -34,6 +34,7 @@ tts_read/
 ### Testing
 - Always create and run tests for new functionality
 - Test files should be placed in the `tests/` directory
+- **Run all tests after making significant changes to ensure nothing is broken**
 
 ### Markdown Report Generation
 - When implementing Markdown conversion features in `src/markdown_converter.py`, always update `config/markdown_spec.yml` with new syntax

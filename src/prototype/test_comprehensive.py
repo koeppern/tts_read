@@ -691,6 +691,113 @@ class TestIntegration:
 		assert hasattr(text_speaker_v2, 'TextSpeakerBase')
 
 
+class TestThreadCleanup:
+	"""Test thread cleanup functionality."""
+	
+	def test_thread_registration(self):
+		"""Test thread registration and unregistration."""
+		from text_speaker_v2 import (
+			register_speech_thread, 
+			unregister_speech_thread,
+			_GLOBAL_THREAD_REGISTRY,
+			_REGISTRY_LOCK
+		)
+		
+		# Create a dummy thread
+		import threading
+		import time
+		
+		def dummy_worker():
+			time.sleep(0.1)
+		
+		thread = threading.Thread(target=dummy_worker, name="TestThread")
+		
+		# Test registration
+		initial_count = len(_GLOBAL_THREAD_REGISTRY)
+		register_speech_thread(thread)
+		
+		with _REGISTRY_LOCK:
+			assert len(_GLOBAL_THREAD_REGISTRY) == initial_count + 1
+			assert thread in _GLOBAL_THREAD_REGISTRY
+		
+		# Test unregistration
+		unregister_speech_thread(thread)
+		
+		with _REGISTRY_LOCK:
+			assert len(_GLOBAL_THREAD_REGISTRY) == initial_count
+			assert thread not in _GLOBAL_THREAD_REGISTRY
+	
+	def test_cleanup_all_speech_threads(self):
+		"""Test cleanup of all speech threads."""
+		from text_speaker_v2 import (
+			register_speech_thread,
+			cleanup_all_speech_threads,
+			_GLOBAL_THREAD_REGISTRY,
+			_REGISTRY_LOCK
+		)
+		
+		import threading
+		import time
+		
+		def dummy_worker():
+			time.sleep(0.5)
+		
+		# Create and register some threads
+		threads = []
+		for i in range(2):
+			thread = threading.Thread(
+				target=dummy_worker,
+				name=f"TestCleanupThread-{i}",
+				daemon=True
+			)
+			threads.append(thread)
+			register_speech_thread(thread)
+			thread.start()
+		
+		# Verify threads are registered
+		with _REGISTRY_LOCK:
+			assert len(_GLOBAL_THREAD_REGISTRY) >= 2
+		
+		# Cleanup all threads
+		cleanup_all_speech_threads()
+		
+		# Verify registry is cleared
+		with _REGISTRY_LOCK:
+			assert len(_GLOBAL_THREAD_REGISTRY) == 0
+	
+	def test_startup_cleanup_execution(self):
+		"""Test that startup_cleanup executes without errors."""
+		from text_speaker_v2 import startup_cleanup
+		
+		# This test just ensures the function runs without exceptions
+		# In a real scenario, it would kill other processes
+		try:
+			startup_cleanup()
+		except Exception as e:
+			pytest.fail(f"startup_cleanup raised an exception: {e}")
+	
+	def test_lock_file_handling(self):
+		"""Test lock file creation and cleanup."""
+		from text_speaker_v2 import _PROCESS_LOCK_FILE, startup_cleanup
+		import os
+		
+		# Ensure no lock file exists initially
+		if os.path.exists(_PROCESS_LOCK_FILE):
+			os.remove(_PROCESS_LOCK_FILE)
+		
+		# Run startup cleanup
+		startup_cleanup()
+		
+		# Verify lock file was created
+		assert os.path.exists(_PROCESS_LOCK_FILE)
+		
+		# Read the lock file content
+		with open(_PROCESS_LOCK_FILE, 'r') as f:
+			pid_str = f.read().strip()
+			assert pid_str.isdigit()
+			assert int(pid_str) == os.getpid()
+
+
 if __name__ == "__main__":
 	# Run tests with pytest
 	pytest.main([__file__, "-v", "--tb=short", "--cov=text_speaker_v2", "--cov-report=term-missing"]) 
