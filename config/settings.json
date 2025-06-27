@@ -2,14 +2,14 @@
   "hotkeys": {
     "action_0": "ctrl+4",
     "action_1": "ctrl+2",
-    "action_2": "ctrl+5",
-    "action_3": "ctrl+6",
-    "action_4": "ctrl+7",
-    "action_5": "ctrl+8",
-    "action_6": "ctrl+9",
-    "action_7": "ctrl+shift+1",
-    "action_8": "ctrl+shift+2",
-    "action_9": "ctrl+shift+3",
+    "action_2": "none",
+    "action_3": "none",
+    "action_4": "none",
+    "action_5": "none",
+    "action_6": "none",
+    "action_7": "none",
+    "action_8": "none",
+    "action_9": "none",
     "action_pause": "ctrl+3"
   },
   "actions": {
@@ -17,80 +17,70 @@
       "name": "German Voice",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
-      "rate": 1.0,
-      "speed": 0.9,
+      "speed": 1.6,
       "enabled": true
     },
     "action_1": {
       "name": "English Voice",
       "engine": "SAPI",
-      "voice": "Microsoft Zira Desktop - English (United States)",
-      "rate": 1.0,
-      "speed": 1.0,
+      "voice": "Microsoft Zira Desktop",
+      "speed": 1.6,
       "enabled": true
     },
     "action_2": {
       "name": "Fast German",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
-      "rate": 1.0,
-      "speed": 1.3,
+      "speed": 1.6,
       "enabled": false
     },
     "action_3": {
       "name": "Slow German",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
-      "rate": 1.0,
-      "speed": 0.7,
+      "speed": 1.6,
       "enabled": false
     },
     "action_4": {
       "name": "Fast English",
       "engine": "SAPI",
-      "voice": "Microsoft Zira Desktop - English (United States)",
-      "rate": 1.0,
-      "speed": 1.3,
+      "voice": "Microsoft Zira Desktop",
+      "speed": 1.6,
       "enabled": false
     },
     "action_5": {
       "name": "Unused Action 5",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
-      "rate": 1.0,
-      "speed": 1.0,
+      "speed": 1.6,
       "enabled": false
     },
     "action_6": {
       "name": "Unused Action 6",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
-      "rate": 1.0,
-      "speed": 1.0,
+      "speed": 1.6,
       "enabled": false
     },
     "action_7": {
       "name": "Unused Action 7",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
-      "rate": 1.0,
-      "speed": 1.0,
+      "speed": 1.6,
       "enabled": false
     },
     "action_8": {
       "name": "Unused Action 8",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
-      "rate": 1.0,
-      "speed": 1.0,
+      "speed": 1.6,
       "enabled": false
     },
     "action_9": {
       "name": "Unused Action 9",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
-      "rate": 1.0,
-      "speed": 1.0,
+      "speed": 1.6,
       "enabled": false
     }
   },

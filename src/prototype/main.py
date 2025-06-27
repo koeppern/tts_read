@@ -144,11 +144,10 @@ class VorleseApp:
             
         # Speak the text
         voice_name = action_config.get("voice", "")
-        rate = action_config.get("rate", 1.0)
         speed = action_config.get("speed", 1.0)
         
-        print(f"🔊 Speaking text with {voice_name} at rate {rate}, speed {speed}")
-        speaker.speak(text, voice_name, rate * speed)  # Combine rate and speed
+        print(f"🔊 Speaking text with {voice_name} at speed {speed}")
+        speaker.speak(text, voice_name, speed)
         
     def _on_pause_resume_hotkey(self):
         """Handle pause/resume hotkey press."""

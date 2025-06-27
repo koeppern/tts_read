@@ -327,7 +327,7 @@ class TextSpeakerBase(ABC):
 		atexit.register(self.cleanup)
 		
 	@abstractmethod
-	def speak(self, text: str, voice_name: str = "", rate: float = 1.0) -> None:
+	def speak(self, text: str, voice_name: str = "", speed: float = 1.0) -> None:
 		"""Speak the given text."""
 		pass
 		
@@ -376,7 +376,7 @@ class NBSapiSpeaker(TextSpeakerBase):
 		self._speech_thread = None
 		print("✅ NBSapi speaker initialized")
 		
-	def speak(self, text: str, voice_name: str = "", rate: float = 1.0) -> None:
+	def speak(self, text: str, voice_name: str = "", speed: float = 1.0) -> None:
 		"""Speak text using NBSapi with proper SAPI control."""
 		print(f"🔊 NBSapi speaking: {text[:50]}...")
 		
@@ -392,9 +392,9 @@ class NBSapiSpeaker(TextSpeakerBase):
 		if voice_name:
 			self._set_voice(voice_name)
 			
-		# Set rate (NBSapi uses -10 to 10 scale)
+		# Set speed (NBSapi uses -10 to 10 scale)
 		# Convert our 0.5-2.0 scale to -10 to 10
-		sapi_rate = round((rate - 1.0) * 10)
+		sapi_rate = round((speed - 1.0) * 10)
 		sapi_rate = max(-10, min(10, sapi_rate))
 		self.tts.SetRate(sapi_rate)
 		
@@ -414,20 +414,51 @@ class NBSapiSpeaker(TextSpeakerBase):
 		try:
 			# Speak without waiting (flag=1 for async)
 			self.tts.Speak(text, 1)
+			print(f"🔧 Speech worker: Started speaking")
 			
 			# Wait for speech to complete
 			while True:
+				with self._lock:
+					if not self._is_speaking:
+						print(f"🔧 Speech worker: Stopping due to _is_speaking = False")
+						break
+				
 				status = self.tts.GetStatus("RunningState")
-				if status != 2:  # Not speaking
+				print(f"🔧 Speech worker: NBSapi status = {status}")
+				
+				if status == 2:  # Speaking
+					print(f"🔧 Speech worker: Still speaking...")
+				elif status == 0:  # Paused
+					print(f"🔧 Speech worker: Detected pause, waiting...")
+					# Wait while paused
+					while True:
+						time.sleep(0.1)
+						pause_status = self.tts.GetStatus("RunningState")
+						if pause_status != 0:  # No longer paused
+							print(f"🔧 Speech worker: Resuming from pause")
+							break
+						with self._lock:
+							if not self._is_speaking:
+								print(f"🔧 Speech worker: Stopping during pause")
+								return
+				elif status == 1:  # Ready (completed)
+					print(f"🔧 Speech worker: Speech completed normally")
 					break
+				else:
+					print(f"🔧 Speech worker: Unknown status {status}, continuing...")
+				
 				time.sleep(0.1)
 				
 		except Exception as e:
 			print(f"❌ NBSapi speak error: {e}")
 		finally:
 			with self._lock:
-				self._is_speaking = False
-				self._is_paused = False
+				if self._is_paused:
+					print(f"🔧 Speech worker: Keeping _is_speaking = True (paused)")
+				else:
+					print(f"🔧 Speech worker: Set _is_speaking = False")
+					self._is_speaking = False
+				# Don't reset _is_paused here - let pause/resume handle it
 			unregister_speech_thread(current_thread)
 				
 	def pause(self) -> None:
@@ -506,7 +537,7 @@ class Pyttsx3Speaker(TextSpeakerBase):
 		self._speech_thread = None
 		print("✅ pyttsx3 speaker initialized (fallback)")
 		
-	def speak(self, text: str, voice_name: str = "", rate: float = 1.0) -> None:
+	def speak(self, text: str, voice_name: str = "", speed: float = 1.0) -> None:
 		"""Speak text using pyttsx3."""
 		print(f"🔊 pyttsx3 speaking: {text[:50]}...")
 		
@@ -522,8 +553,8 @@ class Pyttsx3Speaker(TextSpeakerBase):
 		if voice_name:
 			self._set_voice(voice_name)
 			
-		# Set rate (pyttsx3 typically uses 100-300 range)
-		pyttsx3_rate = int(200 * rate)
+		# Set speed (pyttsx3 typically uses 100-300 range)
+		pyttsx3_rate = int(200 * speed)
 		self.engine.setProperty('rate', pyttsx3_rate)
 		
 		# Start speaking in background thread
