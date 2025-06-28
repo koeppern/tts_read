@@ -130,13 +130,17 @@ class HotkeyListener:
             import time
             while self._running:
                 time.sleep(1)
+                print("🔧 Hotkey listener dummy mode - sleeping...")
         else:
             try:
-                # keyboard.wait() will block and handle events
+                print("🎯 Starting hotkey listening loop...")
+                # Simply keep the thread alive - keyboard module handles hotkeys automatically
+                import time
                 while self._running:
-                    keyboard.wait()
+                    time.sleep(0.1)  # Small sleep to prevent high CPU usage
+                print("✅ Hotkey listening loop ended")
             except Exception as e:
-                print(f"Hotkey listener error: {e}")
+                print(f"❌ Hotkey listener error: {e}")
                 self._running = False
             
     def stop(self) -> None:

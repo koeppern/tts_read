@@ -1,6 +1,0 @@
-Hello World!
-['.', '', 'y:\\tools_johannes', 'G:\\Meine Ablage\\python', 'Y:\\tts_read', 'C:\\Users\\johan\\AppData\\Local\\Programs\\Python\\Python313\\python313.zip', 'C:\\Users\\johan\\AppData\\Local\\Programs\\Python\\Python313\\DLLs', 'C:\\Users\\johan\\AppData\\Local\\Programs\\Python\\Python313\\Lib', 'C:\\Users\\johan\\AppData\\Local\\Programs\\Python\\Python313', 'Y:\\tts_read\\.venv', 'Y:\\tts_read\\.venv\\Lib\\site-packages', 'Y:\\tts_read\\.venv\\Lib\\site-packages\\win32', 'Y:\\tts_read\\.venv\\Lib\\site-packages\\win32\\lib', 'Y:\\tts_read\\.venv\\Lib\\site-packages\\Pythonwin']
-Traceback (most recent call last):
-  File "<string>", line 9, in <module>
-    from main import main
-ImportError: cannot import name 'main' from 'main' (y:\tools_johannes\main.py)

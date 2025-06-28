@@ -4,6 +4,16 @@ from typing import Dict, Any, Optional
 from pathlib import Path
 
 
+def _deep_merge_dicts(d1: Dict, d2: Dict) -> Dict:
+    """Recursively merges d2 into d1. Modifies d1 in place."""
+    for key, value in d2.items():
+        if key in d1 and isinstance(d1[key], dict) and isinstance(value, dict):
+            _deep_merge_dicts(d1[key], value)
+        else:
+            d1[key] = value
+    return d1
+
+
 class SettingsManager:
     """Manages application settings from JSON configuration file."""
     
@@ -35,7 +45,8 @@ class SettingsManager:
                 "action_7": "ctrl+shift+1",
                 "action_8": "ctrl+shift+2",
                 "action_9": "ctrl+shift+3",
-                "action_pause": "ctrl+3"
+                "action_pause": "ctrl+3",
+                "showReadAlongWindow": "ctrl+shift+h"
             },
             "actions": {
                 "action_0": {
@@ -119,32 +130,80 @@ class SettingsManager:
                     "enabled": False
                 }
             },
+            "readAlongWindow": {
+                "fontSize": 18,
+                "highlightColor": "yellow"
+            },
             "startup": False
         }
         
         if not self.config_path.exists():
-            # Create config directory if it doesn't exist
             self.config_path.parent.mkdir(parents=True, exist_ok=True)
-            # Save default settings
             self._save_settings(default_settings)
             return default_settings
             
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
                 loaded_settings = json.load(f)
-                # Merge with defaults to ensure all keys exist
-                for key, value in default_settings.items():
-                    if key not in loaded_settings:
-                        loaded_settings[key] = value
-                return loaded_settings
+            
+            # Deep merge defaults with loaded settings to ensure all keys exist
+            # but preserve user settings over defaults
+            merged_settings = _deep_merge_dicts(default_settings.copy(), loaded_settings)
+            
+            # If something was added, save the file back
+            if merged_settings != loaded_settings:
+                self._save_settings(merged_settings)
+                
+            return merged_settings
+            
         except (json.JSONDecodeError, FileNotFoundError) as e:
             print(f"Error loading settings: {e}. Using defaults.")
             return default_settings
             
     def _save_settings(self, settings: Dict[str, Any]) -> None:
         """Save settings to JSON file."""
-        with open(self.config_path, 'w', encoding='utf-8') as f:
-            json.dump(settings, f, indent=2, ensure_ascii=False)
+        try:
+            with open(self.config_path, 'w', encoding='utf-8') as f:
+                json.dump(settings, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"❌ Failed to save settings to {self.config_path}: {e}")
+
+    def get_setting(self, key_path: str, default: Any = None) -> Any:
+        """Get a specific setting using dot notation.
+        
+        Args:
+            key_path: The setting key in dot notation (e.g., "readAlongWindow.fontSize")
+            default: The default value to return if the key is not found.
+            
+        Returns:
+            The setting value or the default.
+        """
+        try:
+            keys = key_path.split('.')
+            value = self.settings
+            for key in keys:
+                value = value[key]
+            return value
+        except (KeyError, TypeError):
+            return default
+
+    def save_setting(self, key_path: str, value: Any) -> None:
+        """Save a specific setting using dot notation.
+        
+        Args:
+            key_path: The setting key in dot notation (e.g., "readAlongWindow.fontSize")
+            value: The value to save.
+        """
+        try:
+            keys = key_path.split('.')
+            d = self.settings
+            for key in keys[:-1]:
+                d = d.setdefault(key, {})
+            d[keys[-1]] = value
+            
+            self._save_settings(self.settings)
+        except Exception as e:
+            print(f"Error saving setting {key_path}: {e}")
             
     def get_hotkeys(self) -> Dict[str, str]:
         """Get hotkey mappings (action -> hotkey)."""
@@ -232,6 +291,12 @@ class SettingsManager:
         print(f"⏸️ Pause/Resume: {pause_hotkey}")
         print()
         
+        # Print show window action
+        show_window_hotkey = self.get_hotkey_for_action("showReadAlongWindow")
+        if show_window_hotkey:
+            print(f"🖼️ Show Window: {show_window_hotkey}")
+            print()
+
         # Print disabled actions
         all_actions = self.settings.get("actions", {})
         disabled_actions = {action: config for action, config in all_actions.items() 

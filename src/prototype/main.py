@@ -1,3 +1,10 @@
+#!/usr/bin/env python3
+"""
+Main application entry point for TTS hotkey system.
+"""
+
+print("🚀 main.py started - beginning imports...")
+
 import sys
 import os
 import subprocess
@@ -5,20 +12,49 @@ from pathlib import Path
 import platform
 import signal
 import threading
+
+# Add the current directory to Python path for direct execution
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+print("📦 Basic modules imported, importing UI modules...")
+
 try:
     import pystray
     from PIL import Image, ImageDraw
     PYSTRAY_AVAILABLE = True
+    print("✅ pystray modules imported successfully")
 except (ImportError, ValueError):
     PYSTRAY_AVAILABLE = False
+    print("⚠️ pystray not available")
+    
 from threading import Thread
 import time
 
-from settings_manager import SettingsManager
-from text_speaker_v2 import TextSpeakerFactory, startup_cleanup, kill_previous_instances_fast, cleanup_all_speech_threads
-from clipboard_reader import ClipboardReader
-from hotkey_listener import HotkeyListener
-from text_selector import TextSelector
+print("🔧 Importing application modules...")
+
+# Import with fallback for both relative and absolute imports
+try:
+    from .settings_manager import SettingsManager
+    from .text_speaker_v2 import TextSpeakerFactory, startup_cleanup, kill_previous_instances_fast, cleanup_all_speech_threads
+    from .clipboard_reader import ClipboardReader
+    from .hotkey_listener import HotkeyListener
+    from .text_selector import TextSelector
+    from .text_display_window import TextDisplayWindow
+    from .admin_helper import is_admin, print_admin_instructions
+    print("✅ Relative imports successful")
+except ImportError:
+    print("⚠️ Relative imports failed, trying absolute imports...")
+    # Fallback for direct execution
+    from settings_manager import SettingsManager
+    from text_speaker_v2 import TextSpeakerFactory, startup_cleanup, kill_previous_instances_fast, cleanup_all_speech_threads
+    from clipboard_reader import ClipboardReader
+    from hotkey_listener import HotkeyListener
+    from text_selector import TextSelector
+    from text_display_window import TextDisplayWindow
+    from admin_helper import is_admin, print_admin_instructions
+    print("✅ Absolute imports successful")
+
+print("✅ All imports completed successfully")
 
 # Global flag for graceful shutdown
 _shutdown_requested = False
@@ -42,33 +78,47 @@ class VorleseApp:
         """Initialize the application."""
         print("Initializing VorleseApp...")
         
-        # First, cleanup any previous instances and threads
+        # Check administrator privileges first
+        self.has_admin = is_admin()
+        print(f"👤 Administrator privileges: {self.has_admin}")
+        
+        if not self.has_admin:
+            print("⚠️ WARNING: Running without administrator privileges")
+            print("🔑 Global hotkeys (Ctrl+1, Ctrl+2, Ctrl+3) will NOT work")
+            print("💡 Win+Space may still work for text window")
+            print("📖 See START_APP_AS_ADMIN.bat for easy admin start")
+            print()
+        
         startup_cleanup()
         
+        print("📁 Creating SettingsManager...")
         self.settings_manager = SettingsManager()
-        print("Settings manager created")
+        print("📋 Creating ClipboardReader...")
         self.clipboard_reader = ClipboardReader()
-        print("Clipboard reader created")
+        print("🎯 Creating TextSelector...")
         self.text_selector = TextSelector()
-        print("Text selector created")
+        print("⌨️ Creating HotkeyListener...")
         self.hotkey_listener = HotkeyListener()
-        print("Hotkey listener created")
+        print("🖥️ Creating TextDisplayWindow...")
+        self.display_window = TextDisplayWindow(self.settings_manager)
         
-        # Create text speakers for each configured voice
+        print("🔊 Initializing speakers...")
         self.speakers = {}
         self._init_speakers()
         
-        # System tray icon
         self.icon = None
         self._is_running = True
         
-        # Register cleanup on exit
         import atexit
         atexit.register(self.cleanup)
+        print("✅ VorleseApp initialization complete")
+        
+        # Show admin warning again after initialization
+        if not self.has_admin:
+            self._show_admin_warning()
         
     def _init_speakers(self):
         """Initialize text speakers based on configuration."""
-        # Print available SAPI voices on startup
         print("🔊 Available SAPI Voices (NBSapi):")
         temp_speaker = TextSpeakerFactory.create_speaker("SAPI")
         available_voices = temp_speaker.get_available_voices()
@@ -76,22 +126,18 @@ class VorleseApp:
             print(f"   {i+1}. {voice}")
         print()
         
-        # Print current configuration
         self.settings_manager.print_configuration()
         
-        # Initialize speakers for enabled actions
         enabled_actions = self.settings_manager.get_enabled_actions()
         for action, action_config in enabled_actions.items():
             engine_type = action_config.get("engine", "SAPI")
             self.speakers[action] = TextSpeakerFactory.create_speaker(engine_type)
             print(f"✅ Initialized NBSapi speaker for {action} ({action_config.get('name', 'Unnamed')})")
             
-        # Cleanup temp speaker
         temp_speaker.cleanup()
                     
     def _create_tray_icon(self):
         """Create a simple placeholder icon for the system tray."""
-        # Create a simple icon (white circle on blue background)
         image = Image.new('RGB', (64, 64), color='blue')
         draw = ImageDraw.Draw(image)
         draw.ellipse([16, 16, 48, 48], fill='white')
@@ -99,125 +145,85 @@ class VorleseApp:
         
     def _on_speak_hotkey(self, hotkey: str):
         """Handle speak hotkey press."""
-        print(f"🔥 HOTKEY PRESSED: {hotkey} (speak)")
-        
-        # Get action for this hotkey
         action = self.settings_manager.get_action_for_hotkey(hotkey)
         if not action:
-            print(f"❌ No action mapped to hotkey {hotkey}")
             return
             
-        # Get action configuration
         action_config = self.settings_manager.get_action_config(action)
-        if not action_config:
-            print(f"❌ No configuration for action {action}")
+        if not action_config or not action_config.get("enabled", False):
             return
             
-        if not action_config.get("enabled", False):
-            print(f"❌ Action {action} is disabled")
-            return
-            
-        print(f"🎯 Action: {action} ({action_config.get('name', 'Unnamed')})")
-        
-        # First try to copy selected text
-        print("📋 Attempting to copy selected text...")
         copy_success = self.text_selector.copy_selected_text()
-        
-        # Get text from clipboard (either newly copied or existing)
         text = self.clipboard_reader.get_clipboard_text()
         if not text:
-            print("❌ No text in clipboard and no text selected")
             return
             
-        if not copy_success:
-            print(f"📋 Using existing clipboard text: {text[:50]}...")
-        else:
-            print(f"📋 Using copied text: {text[:50]}...")
-        
-        print(f"⚙️ Action config: {action_config}")
-        
-        # Get speaker
+        self.display_window.set_text(text)
+        self.display_window.show()
+
         speaker = self.speakers.get(action)
         if not speaker:
-            print(f"❌ No speaker initialized for action {action}")
             return
             
-        # Speak the text
         voice_name = action_config.get("voice", "")
         speed = action_config.get("speed", 1.0)
         
-        print(f"🔊 Speaking text with {voice_name} at speed {speed}")
-        speaker.speak(text, voice_name, speed)
+        speaker.speak(text, voice_name, speed, self.display_window.highlight_word)
         
     def _on_pause_resume_hotkey(self):
         """Handle pause/resume hotkey press."""
-        print("🔥 HOTKEY PRESSED: PAUSE/RESUME")
-        
-        # Check if any speaker is currently speaking or paused
         active_speaker = None
         paused_speaker = None
         
-        print("🔍 Checking speaker states:")
-        for action, speaker in self.speakers.items():
-            is_speaking = speaker.is_speaking()
-            is_paused = getattr(speaker, '_is_paused', False)
-            action_config = self.settings_manager.get_action_config(action)
-            action_name = action_config.get('name', action)
-            print(f"   {action} ({action_name}): speaking={is_speaking}, paused={is_paused}")
-            
-            if is_speaking and not is_paused:
+        for speaker in self.speakers.values():
+            if speaker.is_speaking():
                 active_speaker = speaker
-                print(f"   → Found active speaker: {action} ({action_name})")
                 break
-            elif is_paused:
+            elif speaker.is_paused():
                 paused_speaker = speaker
-                print(f"   → Found paused speaker: {action} ({action_name})")
                 break
                 
         if active_speaker:
-            # Pause the active speaker
-            print("⏸️ Pausing speech...")
             active_speaker.pause()
-            print("✅ Speech paused")
         elif paused_speaker:
-            # Resume the paused speaker
-            print("▶️ Resuming speech...")
             paused_speaker.resume()
-            print("✅ Speech resumed")
-        else:
-            print("❌ No active or paused speech found")
-            
+
+    def _on_show_window_hotkey(self):
+        """Handle show/hide window hotkey press."""
+        self.display_window.show()
+
     def _register_hotkeys(self):
         """Register all configured hotkeys."""
-        hotkeys = self.settings_manager.get_hotkeys()
-        print(f"🔧 Registering hotkeys: {hotkeys}")
-        
-        # Register hotkeys for all actions
-        for action, hotkey in hotkeys.items():
-            print(f"🔧 Registering {action} -> {hotkey}")
+        try:
+            print("🔍 Getting hotkeys from settings...")
+            hotkeys = self.settings_manager.get_hotkeys()
+            print(f"📋 Found hotkeys: {hotkeys}")
             
-            if action == "action_pause":
-                # Special case for pause/resume
-                success = self.hotkey_listener.register_hotkey(
-                    hotkey,
-                    self._on_pause_resume_hotkey
-                )
-                print(f"   ✅ {action} ({hotkey}): {'Success' if success else 'Failed'}")
-            elif action.startswith("action_"):
-                # Regular speak actions
-                action_config = self.settings_manager.get_action_config(action)
-                if action_config.get("enabled", False):
-                    success = self.hotkey_listener.register_hotkey(
-                        hotkey,
-                        lambda h=hotkey: self._on_speak_hotkey(h)
-                    )
-                    action_name = action_config.get('name', action)
-                    print(f"   ✅ {action} ({action_name}) - {hotkey}: {'Success' if success else 'Failed'}")
-                else:
-                    print(f"   ⏸️ {action} - {hotkey}: Disabled")
-            else:
-                print(f"   ❓ Unknown action type: {action}")
+            for action, hotkey in hotkeys.items():
+                print(f"⌨️ Registering hotkey for {action}: {hotkey}")
                 
+                if action == "action_pause":
+                    print("   ⏸️ Registering pause/resume hotkey")
+                    self.hotkey_listener.register_hotkey(hotkey, self._on_pause_resume_hotkey)
+                elif action == "action_show_text":
+                    print("   🖥️ Registering show text window hotkey")
+                    self.hotkey_listener.register_hotkey(hotkey, self._on_show_window_hotkey)
+                elif action.startswith("action_"):
+                    action_config = self.settings_manager.get_action_config(action)
+                    if action_config and action_config.get("enabled", False):
+                        print(f"   🔊 Registering speak hotkey for {action}")
+                        self.hotkey_listener.register_hotkey(hotkey, lambda h=hotkey: self._on_speak_hotkey(h))
+                    else:
+                        print(f"   ❌ Skipping disabled action: {action}")
+                        
+            print("✅ All hotkeys registered successfully")
+            
+        except Exception as e:
+            print(f"❌ Error registering hotkeys: {e}")
+            import traceback
+            traceback.print_exc()
+            raise
+        
     def _open_settings(self):
         """Open settings file in default text editor."""
         settings_path = self.settings_manager.get_settings_path()
@@ -243,142 +249,107 @@ class VorleseApp:
         
     def run(self):
         """Run the application."""
-        print("Starting Vorlese-App...")
-        
-        # Register hotkeys
+        print("🔧 Registering hotkeys...")
         self._register_hotkeys()
-        
-        # Start hotkey listener
+        print("⌨️ Starting hotkey listener...")
         self.hotkey_listener.start()
         
-        print("TTS Vorlese-App is running.")
-        print("Hotkeys registered:")
-        for hotkey in self.hotkey_listener.get_registered_hotkeys():
-            print(f"  - {hotkey}")
-        
-        # Check if we can use system tray (or force console mode)
+        print("🔍 Checking environment...")
         force_console = os.getenv('VORLESE_CONSOLE_MODE', '').lower() in ('1', 'true', 'yes')
         use_tray = PYSTRAY_AVAILABLE and platform.system() == "Windows" and not force_console
-        
-        print(f"🔧 System tray available: {PYSTRAY_AVAILABLE}")
-        print(f"🔧 Platform: {platform.system()}")
-        print(f"🔧 Force console mode: {force_console}")
-        print(f"🔧 Will use system tray: {use_tray}")
+        print(f"💻 force_console: {force_console}, use_tray: {use_tray}, PYSTRAY_AVAILABLE: {PYSTRAY_AVAILABLE}")
         
         if use_tray:
-            # Create and run system tray icon
+            print("🖼️ Setting up system tray...")
             try:
                 icon_image = self._create_tray_icon()
-                self.icon = pystray.Icon(
-                    "VorleseApp",
-                    icon_image,
-                    "Vorlese-App",
-                    menu=self._create_menu()
-                )
-                print("✅ System tray icon created.")
-                print("📍 Check system tray for the Vorlese-App icon.")
-                print("📍 Right-click the icon to access settings or quit.")
-                print("📍 The application is now running in the background.")
+                self.icon = pystray.Icon("VorleseApp", icon_image, "Vorlese-App", menu=self._create_menu())
+                print("🚀 Starting tray icon...")
+                self.icon.run_detached()
                 
-                # Run icon (this blocks until icon is stopped)
-                self.icon.run()
-                print("✅ System tray icon stopped.")
-                
+                print("🔄 Entering main loop (tray mode)...")
+                while self._is_running:
+                    time.sleep(0.1)  # Simple sleep loop - Tkinter handles its own updates
+                print("✅ Main loop exited (tray mode)")
+
             except Exception as e:
                 print(f"❌ Error with system tray: {e}")
-                print("🔄 Falling back to console mode...")
+                import traceback
+                traceback.print_exc()
                 use_tray = False
         
         if not use_tray:
-            # Run without system tray
-            print("\n" + "="*50)
-            print("🖥️  CONSOLE MODE")
-            print("="*50)
-            print("📍 The application is running in console mode.")
-            print("📍 Hotkeys are active and ready to use:")
-            for hotkey in self.hotkey_listener.get_registered_hotkeys():
-                print(f"   - {hotkey}")
-            print("📍 Press Ctrl+C to exit the application.")
-            print("="*50)
-            
+            print("💻 Running in console mode...")
             try:
+                print("🔄 Entering main loop (console mode)...")
                 while self._is_running and not _shutdown_requested:
-                    time.sleep(0.5)  # More responsive to shutdown signals
-                    
-                if _shutdown_requested:
-                    print("\n📍 Shutdown requested by system signal...")
-                    self._is_running = False
-                    
+                    time.sleep(0.1)  # Simple sleep loop - Tkinter handles its own updates
+                print("✅ Main loop exited (console mode)")
             except KeyboardInterrupt:
-                print("\n📍 Shutdown requested by user...")
+                print("⌨️ Keyboard interrupt in console mode")
                 self._is_running = False
         
     def cleanup(self):
         """Clean up resources."""
-        print("🧹 VorleseApp cleanup...")
-        try:
-            # Stop hotkey listener
-            if hasattr(self, 'hotkey_listener'):
-                self.hotkey_listener.stop()
-                
-            # Cleanup all speakers
-            if hasattr(self, 'speakers'):
-                for action, speaker in self.speakers.items():
-                    print(f"🧹 Cleaning up speaker: {action}")
-                    speaker.cleanup()
-                    
-            print("✅ VorleseApp cleanup completed")
-        except Exception as e:
-            print(f"❌ Error during cleanup: {e}")
+        if hasattr(self, 'hotkey_listener'):
+            self.hotkey_listener.stop()
+        if hasattr(self, 'speakers'):
+            for speaker in self.speakers.values():
+                speaker.cleanup()
             
+    def _show_admin_warning(self):
+        """Show detailed admin warning message."""
+        print("\n" + "=" * 60)
+        print("⚠️  ADMINISTRATOR PRIVILEGES REQUIRED FOR HOTKEYS")
+        print("=" * 60)
+        print("❌ Global hotkeys (Ctrl+1, Ctrl+2, Ctrl+3) will NOT work")
+        print("✅ Text display window (Win+Space) may still work")
+        print()
+        print("📋 TO FIX THIS:")
+        print("1. Close this app")
+        print("2. Right-click on 'START_APP_AS_ADMIN.bat'")
+        print("3. Select 'Run as administrator'")
+        print()
+        print("🔧 OR in VS Code:")
+        print("1. Close VS Code")
+        print("2. Right-click VS Code icon")
+        print("3. Select 'Run as administrator'")
+        print("4. Open project and run app again")
+        print("=" * 60)
+        print()
 
 def main():
-    """Main entry point with fallback kill mechanism."""
+    """Main entry point."""
+    print("🚀 Starting VorleseApp main...")
     app = None
-    startup_successful = False
-    
     try:
-        print("🚀 Starting Vorlese-App...")
+        print("📦 Creating VorleseApp instance...")
         app = VorleseApp()
-        startup_successful = True
-        print("✅ App initialization successful")
+        print("✅ VorleseApp instance created successfully")
         
+        print("🏃 Starting app.run()...")
         app.run()
+        print("✅ app.run() completed")
         
     except KeyboardInterrupt:
         print("\n📍 Shutdown requested by user...")
-        
     except Exception as e:
-        print(f"❌ Critical error during startup/runtime: {e}")
-        print("🔄 Attempting emergency cleanup...")
-        
-        # Emergency fallback kill - if startup failed, try aggressive cleanup
-        if not startup_successful:
-            print("💀 Startup failed - executing emergency force kill...")
-            try:
-                kill_previous_instances_fast()
-                print("✅ Emergency force kill completed")
-            except Exception as kill_error:
-                print(f"❌ Emergency kill also failed: {kill_error}")
-                print("⚠️ Manual cleanup may be required (Task Manager)")
-        
+        print(f"❌ Critical error: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
-        print("🧹 Final cleanup...")
+        print("🧹 Starting cleanup...")
         if app:
-            try:
-                app.cleanup()
-            except Exception as cleanup_error:
-                print(f"❌ Cleanup error: {cleanup_error}")
-        
-        # Final safety net - ensure all our processes are cleaned up
-        try:
-            cleanup_all_speech_threads()
-            print("✅ Final thread cleanup completed")
-        except Exception as thread_cleanup_error:
-            print(f"❌ Thread cleanup error: {thread_cleanup_error}")
-        
+            app.cleanup()
+        cleanup_all_speech_threads()
         print("👋 Vorlese-App shutdown complete")
         
 
 if __name__ == "__main__":
+    print("🎯 Running as main module")
     main()
+else:
+    print("📦 Imported as module")
+        
+
+

@@ -9,7 +9,7 @@ import atexit
 import os
 import psutil
 import signal
-from typing import Optional, List, Dict, Set
+from typing import Optional, List, Dict, Set, Callable
 from abc import ABC, abstractmethod
 from threading import Lock
 
@@ -35,13 +35,13 @@ def register_speech_thread(thread: threading.Thread) -> None:
 	"""Register a speech thread in the global registry."""
 	with _REGISTRY_LOCK:
 		_GLOBAL_THREAD_REGISTRY.add(thread)
-		print(f"🔧 Registered speech thread: {thread.name}")
+	print(f"🔧 Registered speech thread: {thread.name}")
 
 def unregister_speech_thread(thread: threading.Thread) -> None:
 	"""Unregister a speech thread from the global registry."""
 	with _REGISTRY_LOCK:
 		_GLOBAL_THREAD_REGISTRY.discard(thread)
-		print(f"🔧 Unregistered speech thread: {thread.name}")
+	print(f"🔧 Unregistered speech thread: {thread.name}")
 
 def cleanup_all_speech_threads() -> None:
 	"""Force cleanup of all registered speech threads."""
@@ -53,8 +53,6 @@ def cleanup_all_speech_threads() -> None:
 	for thread in threads_to_cleanup:
 		if thread.is_alive():
 			print(f"🔧 Terminating thread: {thread.name}")
-			# Note: Python doesn't have direct thread termination
-			# We rely on the thread's cleanup mechanisms
 			try:
 				thread.join(timeout=1.0)
 				if thread.is_alive():
@@ -67,130 +65,37 @@ def cleanup_all_speech_threads() -> None:
 	
 	print("✅ All speech threads cleanup completed")
 
-def kill_previous_instances() -> None:
-	"""Kill all previous instances of the application with aggressive force-kill."""
-	print("🔍 Checking for previous application instances...")
-	
-	current_pid = os.getpid()
-	killed_count = 0
-	force_killed_count = 0
-	
-	try:
-		# Look for other Python processes running this application
-		processes_to_kill = []
-		
-		for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-			try:
-				if proc.info['pid'] == current_pid:
-					continue
-					
-				# Check if it's a Python process running our application
-				if (proc.info['name'] and 'python' in proc.info['name'].lower() and
-					proc.info['cmdline'] and any('main.py' in str(cmd) for cmd in proc.info['cmdline'])):
-					
-					processes_to_kill.append(proc)
-					
-			except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-				# Process already gone or no access
-				continue
-		
-		if not processes_to_kill:
-			print("✅ No previous instances found")
-			return
-		
-		print(f"🎯 Found {len(processes_to_kill)} previous instance(s)")
-		
-		# Phase 1: Try graceful termination with very short timeout
-		for proc in processes_to_kill[:]:  # Copy list to modify during iteration
-			try:
-				print(f"📤 Sending SIGTERM to PID {proc.pid}")
-				proc.terminate()  # Send SIGTERM
-				
-				# Wait for graceful termination with very short timeout
-				try:
-					proc.wait(timeout=0.3)  # Reduced to 0.3 seconds
-					print(f"✅ Gracefully terminated PID {proc.pid}")
-					processes_to_kill.remove(proc)
-					killed_count += 1
-				except psutil.TimeoutExpired:
-					print(f"⏰ PID {proc.pid} did not respond to SIGTERM")
-					
-			except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-				print(f"⚠️ Process PID {proc.pid} already gone")
-				processes_to_kill.remove(proc)
-				continue
-		
-		# Phase 2: Force kill remaining processes immediately
-		if processes_to_kill:
-			print(f"💀 Force killing {len(processes_to_kill)} unresponsive process(es)")
-			
-			for proc in processes_to_kill:
-				try:
-					print(f"🔪 Force killing PID {proc.pid}")
-					proc.kill()  # SIGKILL - immediate termination
-					
-					# Very short wait to confirm kill
-					try:
-						proc.wait(timeout=0.1)  # Just 0.1 seconds
-						print(f"💀 Force killed PID {proc.pid}")
-						force_killed_count += 1
-					except psutil.TimeoutExpired:
-						print(f"⚠️ PID {proc.pid} still running after force kill")
-						
-				except (psutil.NoSuchProcess, psutil.AccessDenied):
-					print(f"⚠️ Process PID {proc.pid} already gone or no access")
-					continue
-				except Exception as e:
-					print(f"❌ Error force killing PID {proc.pid}: {e}")
-		
-		# Phase 3: Nuclear option - use OS-level kill if available
-		if force_killed_count == 0 and processes_to_kill:
-			print("☢️ Using nuclear option - OS-level kill")
-			
-			for proc in processes_to_kill:
-				try:
-					if os.name == 'nt':  # Windows
-						os.system(f"taskkill /F /PID {proc.pid} >nul 2>&1")
-						print(f"☢️ OS-killed PID {proc.pid} (Windows)")
-					else:  # Unix/Linux
-						os.kill(proc.pid, signal.SIGKILL)
-						print(f"☢️ OS-killed PID {proc.pid} (Unix)")
-					
-					force_killed_count += 1
-					
-				except Exception as e:
-					print(f"❌ OS-level kill failed for PID {proc.pid}: {e}")
-		
-	except Exception as e:
-		print(f"❌ Error checking for previous instances: {e}")
-	
-	# Summary
-	total_killed = killed_count + force_killed_count
-	if total_killed > 0:
-		print(f"🧹 Terminated {total_killed} previous instance(s) "
-		      f"(graceful: {killed_count}, force: {force_killed_count})")
-	else:
-		print("✅ No previous instances found")
-
 def kill_previous_instances_fast() -> None:
 	"""Ultra-fast kill function - immediate force kill without graceful termination."""
+	# Only kill previous instances if explicitly enabled
+	if os.getenv('VORLESE_KILL_PREVIOUS', '').lower() not in ('1', 'true', 'yes'):
+		print("⚡ Skipping kill previous instances (disabled by default)")
+		print("   Set VORLESE_KILL_PREVIOUS=1 to enable")
+		return
+		
 	print("⚡ Fast-killing previous instances...")
 	
 	current_pid = os.getpid()
 	killed_count = 0
 	
 	try:
-		for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+		for proc in psutil.process_iter(['pid', 'name', 'cmdline', 'create_time']):
 			try:
 				if proc.info['pid'] == current_pid:
 					continue
-					
-				# Check if it's a Python process running our application
+				
+				# More selective criteria to avoid killing debuggers or other processes
 				if (proc.info['name'] and 'python' in proc.info['name'].lower() and
-					proc.info['cmdline'] and any('main.py' in str(cmd) for cmd in proc.info['cmdline'])):
+					proc.info['cmdline'] and 
+					any('main.py' in str(cmd) for cmd in proc.info['cmdline']) and
+					not any('debugpy' in str(cmd) for cmd in proc.info['cmdline']) and  # Avoid VSCode debugger
+					not any('pdb' in str(cmd) for cmd in proc.info['cmdline']) and     # Avoid Python debugger
+					not any('.cursor' in str(cmd) for cmd in proc.info['cmdline']) and # Avoid Cursor editor
+					not any('vscode' in str(cmd).lower() for cmd in proc.info['cmdline']) and # Avoid VSCode
+					'vorlese' in ' '.join(proc.info['cmdline']).lower()):  # Only target our app
 					
 					print(f"⚡ Immediately killing PID {proc.info['pid']}")
-					proc.kill()  # Immediate SIGKILL
+					proc.kill()
 					killed_count += 1
 					
 			except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
@@ -204,101 +109,12 @@ def kill_previous_instances_fast() -> None:
 	else:
 		print("✅ No instances to kill")
 
-def detect_runtime_environment() -> str:
-	"""Detect the runtime environment to choose optimal startup mode."""
-	
-	# Check for VS Code / IDE environment
-	if any(env_var in os.environ for env_var in [
-		'VSCODE_PID', 'VSCODE_INJECTION', 'TERM_PROGRAM', 
-		'PYCHARM_HOSTED', 'JUPYTER_RUNTIME_DIR'
-	]):
-		return "ide"
-	
-	# Check for batch file execution
-	if os.environ.get('VORLESE_BATCH_MODE'):
-		return "batch"
-	
-	# Check for terminal/console
-	if os.environ.get('TERM') or os.environ.get('ConEmuPID'):
-		return "terminal"
-	
-	# Default
-	return "unknown"
-
-def get_optimal_startup_mode() -> dict:
-	"""Get optimal startup configuration based on environment."""
-	env = detect_runtime_environment()
-	
-	config = {
-		"skip_process_cleanup": False,
-		"fast_kill_mode": False,
-		"console_mode": False,
-		"reason": ""
-	}
-	
-	if env == "ide":
-		# VS Code, PyCharm, etc. - use fast mode to avoid hanging
-		config.update({
-			"skip_process_cleanup": True,
-			"console_mode": True,
-			"reason": "IDE environment detected - using fast startup"
-		})
-	elif env == "batch":
-		# Batch file - respect user choice
-		config.update({
-			"reason": "Batch file execution - using configured mode"
-		})
-	elif env == "terminal":
-		# Terminal - normal mode but with console output
-		config.update({
-			"console_mode": True,
-			"reason": "Terminal environment - using normal mode with console output"
-		})
-	else:
-		# Unknown - be conservative
-		config.update({
-			"fast_kill_mode": True,
-			"reason": "Unknown environment - using safe fast mode"
-		})
-	
-	return config
-
 def startup_cleanup() -> None:
-	"""Perform startup cleanup of threads and processes with intelligent mode detection."""
+	"""Perform startup cleanup of threads and processes."""
 	print("🚀 Performing startup cleanup...")
-	
-	# Get optimal configuration
-	optimal_config = get_optimal_startup_mode()
-	print(f"🎯 {optimal_config['reason']}")
-	
-	# Check environment variables (they override auto-detection)
-	skip_process_cleanup = os.getenv('VORLESE_SKIP_PROCESS_CLEANUP', '').lower() in ('1', 'true', 'yes')
-	fast_kill_mode = os.getenv('VORLESE_FAST_KILL', '').lower() in ('1', 'true', 'yes')
-	
-	# Apply optimal config if no explicit override
-	if not skip_process_cleanup and not fast_kill_mode:
-		skip_process_cleanup = optimal_config["skip_process_cleanup"]
-		fast_kill_mode = optimal_config["fast_kill_mode"]
-		
-		# Set console mode if recommended
-		if optimal_config["console_mode"] and not os.getenv('VORLESE_CONSOLE_MODE'):
-			os.environ['VORLESE_CONSOLE_MODE'] = '1'
-	
-	if skip_process_cleanup:
-		print("⏭️ Skipping process cleanup (auto-detected or manually set)")
-	else:
-		# Choose kill method based on environment variable or auto-detection
-		if fast_kill_mode:
-			print("⚡ Using fast kill mode (auto-detected or manually set)")
-			kill_previous_instances_fast()
-		else:
-			print("🎯 Using normal kill mode (graceful + force)")
-			kill_previous_instances()
-	
-	# Then cleanup any remaining threads
+	kill_previous_instances_fast()
 	cleanup_all_speech_threads()
 	
-	# Create lock file regardless
 	try:
 		current_pid = os.getpid()
 		if os.path.exists(_PROCESS_LOCK_FILE):
@@ -322,12 +138,10 @@ class TextSpeakerBase(ABC):
 		self._is_paused = False
 		self._current_text = ""
 		self._lock = threading.Lock()
-		
-		# Register cleanup on program exit
 		atexit.register(self.cleanup)
 		
 	@abstractmethod
-	def speak(self, text: str, voice_name: str = "", speed: float = 1.0) -> None:
+	def speak(self, text: str, voice_name: str = "", speed: float = 1.0, word_callback: Optional[Callable[[int, int], None]] = None) -> None:
 		"""Speak the given text."""
 		pass
 		
@@ -374,31 +188,28 @@ class NBSapiSpeaker(TextSpeakerBase):
 		super().__init__()
 		self.tts = NBSapi()
 		self._speech_thread = None
+		self._word_callback = None
 		print("✅ NBSapi speaker initialized")
 		
-	def speak(self, text: str, voice_name: str = "", speed: float = 1.0) -> None:
+	def speak(self, text: str, voice_name: str = "", speed: float = 1.0, word_callback: Optional[Callable[[int, int], None]] = None) -> None:
 		"""Speak text using NBSapi with proper SAPI control."""
 		print(f"🔊 NBSapi speaking: {text[:50]}...")
 		
-		# Stop any current speech
 		self.stop()
 		
 		with self._lock:
 			self._current_text = text
 			self._is_speaking = True
 			self._is_paused = False
+			self._word_callback = word_callback
 			
-		# Set voice if specified
 		if voice_name:
 			self._set_voice(voice_name)
 			
-		# Set speed (NBSapi uses -10 to 10 scale)
-		# Convert our 0.5-2.0 scale to -10 to 10
 		sapi_rate = round((speed - 1.0) * 10)
 		sapi_rate = max(-10, min(10, sapi_rate))
 		self.tts.SetRate(sapi_rate)
 		
-		# Start speaking in background thread
 		self._speech_thread = threading.Thread(
 			target=self._speak_worker,
 			args=(text,),
@@ -412,74 +223,56 @@ class NBSapiSpeaker(TextSpeakerBase):
 		"""Worker thread for speaking."""
 		current_thread = threading.current_thread()
 		try:
-			# Speak without waiting (flag=1 for async)
+			if self._word_callback:
+				def on_word_boundary(location, length):
+					try:
+						if self._word_callback:
+							self._word_callback(location, length)
+					except Exception as e:
+						print(f"❌ Error in NBSapi word callback: {e}")
+				
+				try:
+					self.tts.SetWordCallBack(on_word_boundary)
+				except AttributeError:
+					print("⚠️ NBSapi word callbacks not supported - continuing without highlighting")
+
 			self.tts.Speak(text, 1)
-			print(f"🔧 Speech worker: Started speaking")
 			
-			# Wait for speech to complete
 			while True:
 				with self._lock:
 					if not self._is_speaking:
-						print(f"🔧 Speech worker: Stopping due to _is_speaking = False")
 						break
 				
 				status = self.tts.GetStatus("RunningState")
-				print(f"🔧 Speech worker: NBSapi status = {status}")
-				
-				if status == 2:  # Speaking
-					print(f"🔧 Speech worker: Still speaking...")
-				elif status == 0:  # Paused
-					print(f"🔧 Speech worker: Detected pause, waiting...")
-					# Wait while paused
-					while True:
-						time.sleep(0.1)
-						pause_status = self.tts.GetStatus("RunningState")
-						if pause_status != 0:  # No longer paused
-							print(f"🔧 Speech worker: Resuming from pause")
-							break
-						with self._lock:
-							if not self._is_speaking:
-								print(f"🔧 Speech worker: Stopping during pause")
-								return
-				elif status == 1:  # Ready (completed)
-					print(f"🔧 Speech worker: Speech completed normally")
+				if status == 1: # Completed
 					break
-				else:
-					print(f"🔧 Speech worker: Unknown status {status}, continuing...")
 				
 				time.sleep(0.1)
-				
+			
 		except Exception as e:
 			print(f"❌ NBSapi speak error: {e}")
 		finally:
 			with self._lock:
-				if self._is_paused:
-					print(f"🔧 Speech worker: Keeping _is_speaking = True (paused)")
-				else:
-					print(f"🔧 Speech worker: Set _is_speaking = False")
-					self._is_speaking = False
-				# Don't reset _is_paused here - let pause/resume handle it
+				self._is_speaking = False
+				self._is_paused = False
+				self._word_callback = None
 			unregister_speech_thread(current_thread)
 				
 	def pause(self) -> None:
 		"""Pause speech using NBSapi."""
-		print("⏸️ NBSapi pausing...")
 		try:
 			self.tts.Pause()
 			with self._lock:
 				self._is_paused = True
-			print("✅ NBSapi paused")
 		except Exception as e:
 			print(f"❌ NBSapi pause error: {e}")
 			
 	def resume(self) -> None:
 		"""Resume speech using NBSapi."""
-		print("▶️ NBSapi resuming...")
 		try:
 			self.tts.Resume()
 			with self._lock:
 				self._is_paused = False
-			print("✅ NBSapi resumed")
 		except Exception as e:
 			print(f"❌ NBSapi resume error: {e}")
 			
@@ -487,6 +280,11 @@ class NBSapiSpeaker(TextSpeakerBase):
 		"""Stop speech using NBSapi."""
 		try:
 			self.tts.Stop()
+			if self._word_callback:
+				try:
+					self.tts.SetWordCallBack(None)
+				except AttributeError:
+					pass  # Word callbacks not supported, ignore
 			with self._lock:
 				self._is_speaking = False
 				self._is_paused = False
@@ -495,15 +293,10 @@ class NBSapiSpeaker(TextSpeakerBase):
 			
 	def cleanup(self) -> None:
 		"""Cleanup NBSapi resources."""
-		print("🧹 NBSapi cleanup...")
-		try:
-			self.stop()
-			# Wait for speech thread to finish
-			if self._speech_thread and self._speech_thread.is_alive():
-				self._speech_thread.join(timeout=2.0)
-				unregister_speech_thread(self._speech_thread)
-		except Exception as e:
-			print(f"❌ NBSapi cleanup error: {e}")
+		self.stop()
+		if self._speech_thread and self._speech_thread.is_alive():
+			self._speech_thread.join(timeout=1.0)
+			unregister_speech_thread(self._speech_thread)
 			
 	def _set_voice(self, voice_name: str) -> None:
 		"""Set voice by name."""
@@ -512,9 +305,7 @@ class NBSapiSpeaker(TextSpeakerBase):
 			for i, voice_info in enumerate(voices):
 				if voice_name in voice_info.get("Name", ""):
 					self.tts.SetVoice(i, "by_index")
-					print(f"✅ Voice set to: {voice_name}")
 					return
-			print(f"❌ Voice not found: {voice_name}")
 		except Exception as e:
 			print(f"❌ Error setting voice: {e}")
 			
@@ -535,29 +326,34 @@ class Pyttsx3Speaker(TextSpeakerBase):
 		super().__init__()
 		self.engine = pyttsx3.init()
 		self._speech_thread = None
+		self._word_callback = None
 		print("✅ pyttsx3 speaker initialized (fallback)")
 		
-	def speak(self, text: str, voice_name: str = "", speed: float = 1.0) -> None:
+	def speak(self, text: str, voice_name: str = "", speed: float = 1.0, word_callback: Optional[Callable[[int, int], None]] = None) -> None:
 		"""Speak text using pyttsx3."""
-		print(f"🔊 pyttsx3 speaking: {text[:50]}...")
-		
-		# Stop any current speech
 		self.stop()
 		
 		with self._lock:
 			self._current_text = text
 			self._is_speaking = True
 			self._is_paused = False
+			self._word_callback = word_callback
 			
-		# Set voice properties
 		if voice_name:
 			self._set_voice(voice_name)
 			
-		# Set speed (pyttsx3 typically uses 100-300 range)
 		pyttsx3_rate = int(200 * speed)
 		self.engine.setProperty('rate', pyttsx3_rate)
 		
-		# Start speaking in background thread
+		if self._word_callback:
+			def on_word(name, location, length):
+				try:
+					if self._word_callback:
+						self._word_callback(location, length)
+				except Exception as e:
+					print(f"Error in pyttsx3 word callback: {e}")
+			self.engine.connect('started-word', on_word)
+
 		self._speech_thread = threading.Thread(
 			target=self._speak_worker,
 			args=(text,),
@@ -579,21 +375,24 @@ class Pyttsx3Speaker(TextSpeakerBase):
 			with self._lock:
 				self._is_speaking = False
 				self._is_paused = False
+				if self._word_callback:
+					pass
 			unregister_speech_thread(current_thread)
 				
 	def pause(self) -> None:
 		"""Pause not supported in basic pyttsx3."""
-		print("⏸️ pyttsx3 pause not supported - stopping instead")
 		self.stop()
 		
 	def resume(self) -> None:
 		"""Resume not supported in basic pyttsx3."""
-		print("▶️ pyttsx3 resume not supported")
+		pass
 		
 	def stop(self) -> None:
 		"""Stop speech."""
 		try:
 			self.engine.stop()
+			if self._word_callback:
+				self.engine.disconnect('started-word')
 			with self._lock:
 				self._is_speaking = False
 				self._is_paused = False
@@ -602,14 +401,10 @@ class Pyttsx3Speaker(TextSpeakerBase):
 			
 	def cleanup(self) -> None:
 		"""Cleanup pyttsx3 resources."""
-		print("🧹 pyttsx3 cleanup...")
-		try:
-			self.stop()
-			if self._speech_thread and self._speech_thread.is_alive():
-				self._speech_thread.join(timeout=2.0)
-				unregister_speech_thread(self._speech_thread)
-		except Exception as e:
-			print(f"❌ pyttsx3 cleanup error: {e}")
+		self.stop()
+		if self._speech_thread and self._speech_thread.is_alive():
+			self._speech_thread.join(timeout=1.0)
+			unregister_speech_thread(self._speech_thread)
 			
 	def _set_voice(self, voice_name: str) -> None:
 		"""Set voice by name."""
@@ -618,9 +413,7 @@ class Pyttsx3Speaker(TextSpeakerBase):
 			for voice in voices:
 				if voice_name in voice.name:
 					self.engine.setProperty('voice', voice.id)
-					print(f"✅ Voice set to: {voice_name}")
 					return
-			print(f"❌ Voice not found: {voice_name}")
 		except Exception as e:
 			print(f"❌ Error setting voice: {e}")
 			
@@ -647,24 +440,16 @@ class TextSpeakerFactory:
 				print(f"❌ Failed to create NBSapi speaker: {e}")
 				print("🔄 Falling back to pyttsx3...")
 				
-		# Fallback to pyttsx3
 		return Pyttsx3Speaker()
 
-
-# Global cleanup function
 def cleanup_all_speakers():
 	"""Cleanup function to be called on program exit."""
 	print("🧹 Cleaning up all speakers...")
 	cleanup_all_speech_threads()
 	
-	# Clean up lock file
 	try:
 		if os.path.exists(_PROCESS_LOCK_FILE):
 			os.remove(_PROCESS_LOCK_FILE)
 			print("🧹 Removed lock file")
 	except Exception as e:
 		print(f"❌ Error removing lock file: {e}")
-
-
-# Register global cleanup
-atexit.register(cleanup_all_speakers) 

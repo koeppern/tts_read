@@ -1,6 +1,6 @@
 {
   "hotkeys": {
-    "action_0": "ctrl+4",
+    "action_0": "ctrl+1",
     "action_1": "ctrl+2",
     "action_2": "none",
     "action_3": "none",
@@ -10,13 +10,16 @@
     "action_7": "none",
     "action_8": "none",
     "action_9": "none",
-    "action_pause": "ctrl+3"
+    "action_pause": "ctrl+3",
+    "showReadAlongWindow": "ctrl+shift+h",
+    "action_show_text": "win+space"
   },
   "actions": {
     "action_0": {
       "name": "German Voice",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
+      "rate": 1.0,
       "speed": 1.6,
       "enabled": true
     },
@@ -24,6 +27,7 @@
       "name": "English Voice",
       "engine": "SAPI",
       "voice": "Microsoft Zira Desktop",
+      "rate": 1.0,
       "speed": 1.6,
       "enabled": true
     },
@@ -31,6 +35,7 @@
       "name": "Fast German",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
+      "rate": 1.0,
       "speed": 1.6,
       "enabled": false
     },
@@ -38,6 +43,7 @@
       "name": "Slow German",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
+      "rate": 1.0,
       "speed": 1.6,
       "enabled": false
     },
@@ -45,6 +51,7 @@
       "name": "Fast English",
       "engine": "SAPI",
       "voice": "Microsoft Zira Desktop",
+      "rate": 1.0,
       "speed": 1.6,
       "enabled": false
     },
@@ -52,6 +59,7 @@
       "name": "Unused Action 5",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
+      "rate": 1.0,
       "speed": 1.6,
       "enabled": false
     },
@@ -59,6 +67,7 @@
       "name": "Unused Action 6",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
+      "rate": 1.0,
       "speed": 1.6,
       "enabled": false
     },
@@ -66,6 +75,7 @@
       "name": "Unused Action 7",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
+      "rate": 1.0,
       "speed": 1.6,
       "enabled": false
     },
@@ -73,6 +83,7 @@
       "name": "Unused Action 8",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
+      "rate": 1.0,
       "speed": 1.6,
       "enabled": false
     },
@@ -80,9 +91,15 @@
       "name": "Unused Action 9",
       "engine": "SAPI",
       "voice": "Microsoft Hedda Desktop",
+      "rate": 1.0,
       "speed": 1.6,
       "enabled": false
     }
+  },
+  "readAlongWindow": {
+    "fontSize": 18,
+    "highlightColor": "yellow",
+    "darkMode": true
   },
   "startup": false
 }
