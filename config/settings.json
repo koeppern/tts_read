@@ -12,7 +12,7 @@
     "action_9": "none",
     "action_pause": "ctrl+3",
     "showReadAlongWindow": "ctrl+shift+h",
-    "action_show_text": "win+space"
+    "action_show_text": "ctrl+4"
   },
   "actions": {
     "action_0": {

@@ -145,29 +145,43 @@ class VorleseApp:
         
     def _on_speak_hotkey(self, hotkey: str):
         """Handle speak hotkey press."""
+        print(f"🔊 DEBUG: Sprach-Hotkey gedrückt: {hotkey}")
+        
         action = self.settings_manager.get_action_for_hotkey(hotkey)
         if not action:
+            print(f"❌ DEBUG: Keine Aktion für Hotkey {hotkey} gefunden")
             return
             
+        print(f"🎯 DEBUG: Aktion gefunden: {action}")
+        
         action_config = self.settings_manager.get_action_config(action)
         if not action_config or not action_config.get("enabled", False):
+            print(f"❌ DEBUG: Aktion {action} nicht aktiviert oder konfiguriert")
             return
             
+        print("📋 DEBUG: Kopiere markierten Text...")
         copy_success = self.text_selector.copy_selected_text()
         text = self.clipboard_reader.get_clipboard_text()
         if not text:
+            print("❌ DEBUG: Kein Text im Clipboard gefunden")
             return
             
+        print(f"✅ DEBUG: Text erhalten: {len(text)} Zeichen")
+        print("🖥️ DEBUG: Setze Text im Display-Fenster...")
         self.display_window.set_text(text)
+        
+        print("🖥️ DEBUG: Zeige Display-Fenster...")
         self.display_window.show()
 
         speaker = self.speakers.get(action)
         if not speaker:
+            print(f"❌ DEBUG: Kein Speaker für Aktion {action} gefunden")
             return
             
         voice_name = action_config.get("voice", "")
         speed = action_config.get("speed", 1.0)
         
+        print(f"🔊 DEBUG: Starte Vorlesen mit Voice: '{voice_name}', Speed: {speed}")
         speaker.speak(text, voice_name, speed, self.display_window.highlight_word)
         
     def _on_pause_resume_hotkey(self):
@@ -190,7 +204,30 @@ class VorleseApp:
 
     def _on_show_window_hotkey(self):
         """Handle show/hide window hotkey press."""
-        self.display_window.show()
+        print("🎯 DEBUG: Text-Fenster Hotkey erkannt! (Strg+4)")
+        
+        try:
+            # Versuche aktuellen Clipboard-Text zu holen
+            text = self.clipboard_reader.get_clipboard_text()
+            print(f"📋 DEBUG: Clipboard-Text erhalten: {bool(text)}")
+            
+            # Falls kein Text im Clipboard, zeige Platzhaltertext
+            if not text:
+                text = "📝 Text-Fenster\n\nMarkieren Sie Text und drücken Sie Strg+1 oder Strg+2 zum Vorlesen.\n\nOder kopieren Sie Text in die Zwischenablage und drücken Sie erneut Strg+4."
+                print("📝 DEBUG: Verwende Platzhaltertext")
+            else:
+                print(f"📝 DEBUG: Verwende Clipboard-Text: {text[:50]}...")
+            
+            # Setze Text und zeige Fenster
+            print("🖥️ DEBUG: Setze Text und zeige Fenster...")
+            self.display_window.set_text(text)
+            self.display_window.show()
+            print("✅ DEBUG: Text-Fenster sollte jetzt angezeigt werden!")
+            
+        except Exception as e:
+            print(f"❌ DEBUG: Fehler in _on_show_window_hotkey: {e}")
+            import traceback
+            traceback.print_exc()
 
     def _register_hotkeys(self):
         """Register all configured hotkeys."""
@@ -291,11 +328,31 @@ class VorleseApp:
         
     def cleanup(self):
         """Clean up resources."""
+        print("🧹 VorleseApp cleanup starting...")
+        
         if hasattr(self, 'hotkey_listener'):
-            self.hotkey_listener.stop()
+            try:
+                self.hotkey_listener.stop()
+                print("✅ Hotkey listener stopped")
+            except Exception as e:
+                print(f"❌ Error stopping hotkey listener: {e}")
+        
+        if hasattr(self, 'display_window') and self.display_window:
+            try:
+                self.display_window.cleanup()
+                print("✅ Display window cleaned up")
+            except Exception as e:
+                print(f"❌ Error cleaning up display window: {e}")
+        
         if hasattr(self, 'speakers'):
-            for speaker in self.speakers.values():
-                speaker.cleanup()
+            try:
+                for speaker in self.speakers.values():
+                    speaker.cleanup()
+                print("✅ Speakers cleaned up")
+            except Exception as e:
+                print(f"❌ Error cleaning up speakers: {e}")
+        
+        print("✅ VorleseApp cleanup completed")
             
     def _show_admin_warning(self):
         """Show detailed admin warning message."""
