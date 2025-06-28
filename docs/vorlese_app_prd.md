@@ -30,13 +30,25 @@ Entwicklung einer minimalistischen Windows-Anwendung, die es erlaubt, markierten
 * Jede Tastenkombination ist in der Konfigurationsdatei frei belegbar
 * Pro Sprache ist ein Sprachmodul (SAPI-Stimme) samt Sprechgeschwindigkeit definierbar
 
-### 2.3 System-Tray-Integration
+### 2.3 Text-Display-Fenster mit Word-Highlighting
+* **Automatisches Textfenster**: Beim Vorlesen wird ein separates Fenster geöffnet, das den aktuell gesprochenen Text anzeigt
+* **Word-by-Word-Highlighting**: Das gerade gesprochene Wort wird im Textfenster farblich hervorgehoben
+* **Funktionen des Textfensters**:
+  - Automatisches Scrollen um das aktuelle Wort im Blick zu behalten
+  - Schriftgröße per Strg+Plus/Minus änderbar
+  - Dark-Mode-Support (konfigurierbar)
+  - Fenster kann manuell geschlossen werden ohne das Vorlesen zu stoppen
+* **Technische Umsetzung**: 
+  - Primär: Echte Word-Boundary-Callbacks von NBSapi/SAPI
+  - Fallback: Simuliertes Word-Highlighting mit zeitlicher Schätzung
+
+### 2.4 System-Tray-Integration
 * Platzhalter-Icon im Infobereich
 * Rechtsklick-Menü:
-  - „Einstellungen öffnen“ → öffnet `settings.json` im Texteditor
-  - „Beenden“ → beendet Anwendung sofort
+  - „Einstellungen öffnen" → öffnet `settings.json` im Texteditor
+  - „Beenden" → beendet Anwendung sofort
 
-### 2.4 Konfigurierbarkeit
+### 2.5 Konfigurierbarkeit
 * Konfigurationsdatei `settings.json` im gleichen Ordner wie die EXE-Datei
 * Beispielstruktur:
   ```json
@@ -61,6 +73,13 @@ Entwicklung einer minimalistischen Windows-Anwendung, die es erlaubt, markierten
     "startup": false
   }
   ```
+
+### UC5 – Text-Display-Fenster mit Word-Highlighting
+* Benutzer markiert Text, drückt Strg+1 oder Strg+2
+* Textfenster öffnet sich automatisch und zeigt den gesprochenen Text
+* Wörter werden synchron zum Vorlesen hervorgehoben
+* Benutzer kann Schriftgröße anpassen (Strg+Plus/Minus)
+* Fenster scrollt automatisch mit, kann aber auch manuell bedient werden
 
 ---
 
@@ -103,7 +122,7 @@ Entwicklung einer minimalistischen Windows-Anwendung, die es erlaubt, markierten
 * Benutzer drückt Strg+3 → Vorlesen wird pausiert oder fortgesetzt
 
 ### UC4 – Konfiguration anpassen
-* Benutzer klickt im Tray mit rechts → „Einstellungen öffnen“  
+* Benutzer klickt im Tray mit rechts → „Einstellungen öffnen"  
 * Ändert `settings.json`  
 * Speichert Datei → Änderungen gelten nach einem Neustart oder Re-Init
 

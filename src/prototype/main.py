@@ -186,21 +186,33 @@ class VorleseApp:
         
     def _on_pause_resume_hotkey(self):
         """Handle pause/resume hotkey press."""
+        print("⏸️ DEBUG: Pause/Resume Hotkey gedrückt (Strg+3)")
+        
         active_speaker = None
         paused_speaker = None
         
-        for speaker in self.speakers.values():
-            if speaker.is_speaking():
+        # Debug: Zeige Status aller Speaker
+        print("🔍 DEBUG: Überprüfe Speaker-Status:")
+        for name, speaker in self.speakers.items():
+            is_speaking = speaker.is_speaking()
+            is_paused = speaker.is_paused()
+            print(f"  {name}: speaking={is_speaking}, paused={is_paused}")
+            
+            if is_speaking:
                 active_speaker = speaker
                 break
-            elif speaker.is_paused():
+            elif is_paused:
                 paused_speaker = speaker
                 break
-                
+        
         if active_speaker:
+            print("⏸️ DEBUG: Pausiere aktiven Speaker")
             active_speaker.pause()
         elif paused_speaker:
+            print("▶️ DEBUG: Setze pausierten Speaker fort")
             paused_speaker.resume()
+        else:
+            print("⚠️ DEBUG: Kein aktiver oder pausierter Speaker gefunden")
 
     def _on_show_window_hotkey(self):
         """Handle show/hide window hotkey press."""

@@ -97,7 +97,7 @@
     }
   },
   "readAlongWindow": {
-    "fontSize": 18,
+    "fontSize": 34,
     "highlightColor": "yellow",
     "darkMode": true
   },

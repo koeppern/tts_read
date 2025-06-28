@@ -198,8 +198,15 @@ class NBSapiSpeaker(TextSpeakerBase):
 		
 	def speak(self, text: str, voice_name: str = "", speed: float = 1.0, word_callback: Optional[Callable[[int, int], None]] = None) -> None:
 		"""Speak text using NBSapi with proper SAPI control."""
-		print(f"🔊 NBSapi speaking: {text[:50]}...")
+		print(f"🔊 DEBUG: Neue Speak-Anfrage erhalten: {text[:50]}...")
 		
+		with self._lock:
+			was_speaking = self._is_speaking
+			was_paused = self._is_paused
+		
+		print(f"🔊 DEBUG: Aktueller Status - speaking: {was_speaking}, paused: {was_paused}")
+		
+		print("🛑 DEBUG: Stoppe aktuelles Vorlesen...")
 		self.stop()
 		
 		with self._lock:
@@ -228,84 +235,331 @@ class NBSapiSpeaker(TextSpeakerBase):
 		"""Worker thread for speaking."""
 		current_thread = threading.current_thread()
 		try:
+			# Store text for word position calculation
+			self._current_text = text
+			
 			if self._word_callback:
+				print("🔊 DEBUG: Word-Callback aktiviert, registriere NBSapi-Callback...")
+				
 				def on_word_boundary(location, length):
+					"""NBSapi word boundary callback handler."""
 					try:
-						if self._word_callback:
-							self._word_callback(location, length)
+						print(f"📝 DEBUG: Word-Callback aufgerufen: Position={location}, Länge={length}")
+						if self._word_callback and location >= 0 and length > 0:
+							# Ensure we don't go beyond text boundaries
+							if location + length <= len(self._current_text):
+								word = self._current_text[location:location+length]
+								print(f"🔤 DEBUG: Hervorgehobenes Wort: '{word}'")
+								self._word_callback(location, length)
+							else:
+								print(f"⚠️ DEBUG: Word-Position außerhalb des Textes: {location}+{length} > {len(self._current_text)}")
 					except Exception as e:
-						print(f"❌ Error in NBSapi word callback: {e}")
+						print(f"❌ DEBUG: Fehler im Word-Callback: {e}")
+						import traceback
+						traceback.print_exc()
 				
 				try:
-					self.tts.SetWordCallBack(on_word_boundary)
-				except AttributeError:
-					print("⚠️ NBSapi word callbacks not supported - continuing without highlighting")
+					# Try different NBSapi word callback methods
+					if hasattr(self.tts, 'SetWordCallBack'):
+						print("✅ DEBUG: Verwende SetWordCallBack")
+						self.tts.SetWordCallBack(on_word_boundary)
+					elif hasattr(self.tts, 'SetCallBack'):
+						print("✅ DEBUG: Verwende SetCallBack")
+						self.tts.SetCallBack(on_word_boundary)
+					else:
+						print("⚠️ DEBUG: Keine Word-Callback-Methode gefunden")
+						available_methods = [method for method in dir(self.tts) if 'callback' in method.lower() or 'word' in method.lower()]
+						print(f"🔍 DEBUG: Verfügbare Methoden: {available_methods}")
+						print("🔄 DEBUG: Fallback-Highlighting wird verwendet")
+						# DON'T disable word_callback - we need it for fallback highlighting!
+				except Exception as e:
+					print(f"❌ DEBUG: Fehler beim Registrieren des Word-Callbacks: {e}")
+					print("🔄 DEBUG: Fallback-Highlighting wird verwendet")
+					# DON'T disable word_callback - we need it for fallback highlighting!
+			else:
+				print("📝 DEBUG: Kein Word-Callback verfügbar")
 
-			self.tts.Speak(text, 1)
+			print("🎙️ DEBUG: Starte NBSapi.Speak()...")
 			
+			# Check if word callback is set but NBSapi doesn't support it
+			use_fallback_highlighting = (self._word_callback and 
+										not hasattr(self.tts, 'SetWordCallBack') and 
+										not hasattr(self.tts, 'SetCallBack'))
+			
+			if use_fallback_highlighting:
+				print("🔄 DEBUG: Verwende Fallback-Word-Highlighting...")
+				self._speak_with_word_highlighting_fallback(text)
+			else:
+				self.tts.Speak(text, 1)
+			
+			status_check_count = 0
 			while True:
 				with self._lock:
 					if not self._is_speaking:
+						print("🔚 DEBUG: _is_speaking ist False - beende Speech-Thread")
 						break
 					
 					# Don't check GetStatus when paused - wait for resume or stop
 					if self._is_paused:
+						if status_check_count % 50 == 0:  # Every 5 seconds
+							print("⏸️ DEBUG: Speech-Thread wartet (pausiert)")
+						status_check_count += 1
+						time.sleep(0.1)
 						continue
 				
 				# Only check status when not paused
 				try:
 					status = self.tts.GetStatus("RunningState")
+					if status_check_count % 10 == 0:  # Every second
+						print(f"🔊 DEBUG: SAPI Status: {status} (0=speaking, 1=completed)")
+					
 					if status == 1: # Completed (and not paused)
 						with self._lock:
 							if not self._is_paused:  # Only break if truly completed, not paused
+								print("✅ DEBUG: SAPI completed - beende Speech-Thread")
 								break
+							else:
+								print("⚠️ DEBUG: SAPI zeigt 'completed' aber wir sind pausiert - ignoriere")
 				except Exception as e:
-					# If we can't get status, assume still speaking
-					pass
+					if status_check_count % 50 == 0:  # Occasional debug
+						print(f"⚠️ DEBUG: GetStatus error: {e}")
 				
+				status_check_count += 1
 				time.sleep(0.1)
 			
 		except Exception as e:
-			print(f"❌ NBSapi speak error: {e}")
+			print(f"❌ DEBUG: NBSapi speak error: {e}")
+			import traceback
+			traceback.print_exc()
 		finally:
+			print("🔚 DEBUG: Speech-Thread wird beendet, räume auf...")
 			with self._lock:
 				self._is_speaking = False
 				self._is_paused = False
 				self._word_callback = None
 			unregister_speech_thread(current_thread)
+			print("✅ DEBUG: Speech-Thread erfolgreich beendet")
+	
+	def _speak_with_word_highlighting_fallback(self, text: str) -> None:
+		"""Adaptive word highlighting synchronized with real SAPI speech progress."""
+		import re
+		
+		print("🔄 Starting adaptive word highlighting...")
+		
+		# Split text into words and track positions
+		words = []
+		for match in re.finditer(r'\S+', text):
+			word = match.group()
+			start_pos = match.start()
+			end_pos = match.end()
+			words.append({
+				'text': word,
+				'start': start_pos,
+				'end': end_pos,
+				'length': len(word)
+			})
+		
+		print(f"📝 Found {len(words)} words for highlighting")
+		
+		# Start speaking the whole text
+		speech_start_time = time.time()
+		self.tts.Speak(text, 1)
+		
+		# Adaptive highlighting algorithm
+		self._adaptive_word_highlighting(words, speech_start_time, text)
+		
+	def _adaptive_word_highlighting(self, words, speech_start_time, full_text):
+		"""Adaptive word highlighting that learns from actual speech timing."""
+		
+		# Initial estimates based on typical speech patterns
+		# Average speaking rate: 150-200 words per minute
+		# Adjust based on SAPI rate settings if available
+		try:
+			sapi_rate = self.tts.GetRate()  # SAPI rate: -10 to +10
+			# Convert SAPI rate to multiplier (rate 0 = normal, positive = faster)
+			rate_multiplier = 1.0 + (sapi_rate * 0.1)  # Rough approximation
+			base_chars_per_second = 12.0 * rate_multiplier  # Adaptive base rate
+		except:
+			base_chars_per_second = 12.0  # Fallback
+		
+		print(f"⏱️ Using adaptive speech rate: {base_chars_per_second:.1f} chars/sec")
+		
+		# Track actual vs expected timing for learning
+		last_word_time = speech_start_time
+		cumulative_chars = 0
+		timing_corrections = []
+		
+		for i, word_info in enumerate(words):
+			# Check if we should stop
+			with self._lock:
+				if not self._is_speaking:
+					print("🔚 DEBUG: Highlighting stopped - _is_speaking ist False")
+					break
+				if self._is_paused:
+					print(f"⏸️ DEBUG: Highlighting pausiert bei Wort '{word_info['text']}'")
+			
+			# Handle pause separately outside the lock to avoid deadlocks
+			if self._is_paused:
+				pause_start = time.time()
+				pause_logged = False
+				while True:
+					with self._lock:
+						if not self._is_speaking:
+							print("🔚 DEBUG: Speech stopped während Pause")
+							return
+						if not self._is_paused:
+							break
+					
+					if not pause_logged:
+						print(f"⏸️ DEBUG: Warte auf Resume bei Wort '{word_info['text']}'...")
+						pause_logged = True
+					time.sleep(0.1)
+				
+				# Adjust speech start time for pause duration
+				pause_duration = time.time() - pause_start
+				speech_start_time += pause_duration
+				print(f"▶️ DEBUG: Resume nach {pause_duration:.1f}s Pause, Timeline angepasst")
+			
+			# Calculate expected time for this word
+			cumulative_chars += word_info['length'] + 1  # +1 for space
+			
+			# Apply timing corrections from previous words
+			if timing_corrections:
+				# Use recent corrections to adjust rate
+				recent_corrections = timing_corrections[-3:]  # Last 3 corrections
+				avg_correction = sum(recent_corrections) / len(recent_corrections)
+				adjusted_rate = base_chars_per_second * avg_correction
+			else:
+				adjusted_rate = base_chars_per_second
+			
+			expected_word_time = speech_start_time + (cumulative_chars / adjusted_rate)
+			
+			# Wait until it's time for this word, but also check SAPI status
+			current_time = time.time()
+			wait_time = expected_word_time - current_time
+			
+			# Intelligent waiting: check SAPI status while waiting
+			wait_start = time.time()
+			while wait_time > 0 and self._is_speaking:
+				# Check if speech is still running
+				try:
+					status = self.tts.GetStatus("RunningState")
+					if status == 1:  # Completed
+						# Speech finished earlier than expected
+						remaining_words = len(words) - i
+						if remaining_words > 1:
+							print(f"⚡ Speech completed early, highlighting remaining {remaining_words} words quickly")
+							# Highlight remaining words quickly
+							for j in range(i, len(words)):
+								remaining_word = words[j]
+								if self._word_callback:
+									self._word_callback(remaining_word['start'], remaining_word['length'])
+								time.sleep(0.1)  # Brief pause between quick highlights
+							return
+						break
+				except:
+					pass
+				
+				# Sleep in small increments to remain responsive
+				sleep_time = min(wait_time, 0.05)
+				time.sleep(sleep_time)
+				current_time = time.time()
+				wait_time = expected_word_time - current_time
+			
+			# Highlight the word
+			actual_word_time = time.time()
+			try:
+				print(f"🔤 Highlighting: '{word_info['text']}'")
+				if self._word_callback:
+					self._word_callback(word_info['start'], word_info['length'])
+			except Exception as e:
+				print(f"❌ Word highlighting error: {e}")
+			
+			# Learn from actual timing for future corrections
+			if i > 0:  # Skip first word (no previous timing to compare)
+				expected_duration = expected_word_time - last_word_time
+				actual_duration = actual_word_time - last_word_time
+				if expected_duration > 0:
+					timing_ratio = actual_duration / expected_duration
+					timing_corrections.append(timing_ratio)
+					# Keep only recent corrections
+					if len(timing_corrections) > 10:
+						timing_corrections.pop(0)
+			
+			last_word_time = actual_word_time
+		
+		print("✅ Adaptive word highlighting completed")
 				
 	def pause(self) -> None:
 		"""Pause speech using NBSapi."""
+		print("⏸️ DEBUG: Pause-Befehl erhalten")
 		try:
+			with self._lock:
+				if not self._is_speaking:
+					print("⚠️ DEBUG: Nicht am Sprechen - Pause ignoriert")
+					return
+				if self._is_paused:
+					print("⚠️ DEBUG: Bereits pausiert - Pause ignoriert")
+					return
+			
+			print("⏸️ DEBUG: Pausiere NBSapi...")
 			self.tts.Pause()
 			with self._lock:
 				self._is_paused = True
+			print("✅ DEBUG: Pause erfolgreich")
 		except Exception as e:
-			print(f"❌ NBSapi pause error: {e}")
+			print(f"❌ DEBUG: NBSapi pause error: {e}")
 			
 	def resume(self) -> None:
 		"""Resume speech using NBSapi."""
+		print("▶️ DEBUG: Resume-Befehl erhalten")
 		try:
+			with self._lock:
+				if not self._is_speaking:
+					print("⚠️ DEBUG: Nicht am Sprechen - Resume ignoriert")
+					return
+				if not self._is_paused:
+					print("⚠️ DEBUG: Nicht pausiert - Resume ignoriert")
+					return
+			
+			print("▶️ DEBUG: Setze NBSapi fort...")
 			self.tts.Resume()
 			with self._lock:
 				self._is_paused = False
+			print("✅ DEBUG: Resume erfolgreich")
 		except Exception as e:
-			print(f"❌ NBSapi resume error: {e}")
+			print(f"❌ DEBUG: NBSapi resume error: {e}")
 			
 	def stop(self) -> None:
 		"""Stop speech using NBSapi."""
+		print("🛑 DEBUG: Stop-Befehl erhalten")
 		try:
+			with self._lock:
+				was_speaking = self._is_speaking
+				was_paused = self._is_paused
+			
+			if not was_speaking:
+				print("⚠️ DEBUG: Nicht am Sprechen - Stop ignoriert")
+				return
+			
+			print(f"🛑 DEBUG: Stoppe NBSapi (was_paused: {was_paused})")
 			self.tts.Stop()
 			if self._word_callback:
 				try:
 					self.tts.SetWordCallBack(None)
 				except AttributeError:
 					pass  # Word callbacks not supported, ignore
+			
 			with self._lock:
 				self._is_speaking = False
 				self._is_paused = False
+			print("✅ DEBUG: Stop erfolgreich")
 		except Exception as e:
-			print(f"❌ NBSapi stop error: {e}")
+			print(f"❌ DEBUG: NBSapi stop error: {e}")
+			# Ensure state is cleared even on error
+			with self._lock:
+				self._is_speaking = False
+				self._is_paused = False
 			
 	def cleanup(self) -> None:
 		"""Cleanup NBSapi resources."""
