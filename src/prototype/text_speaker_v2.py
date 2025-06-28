@@ -166,9 +166,14 @@ class TextSpeakerBase(ABC):
 		pass
 		
 	def is_speaking(self) -> bool:
-		"""Check if currently speaking."""
+		"""Check if currently speaking (not paused)."""
 		with self._lock:
 			return self._is_speaking and not self._is_paused
+			
+	def is_active(self) -> bool:
+		"""Check if speech is active (speaking or paused)."""
+		with self._lock:
+			return self._is_speaking
 			
 	def is_paused(self) -> bool:
 		"""Check if currently paused."""
@@ -242,10 +247,26 @@ class NBSapiSpeaker(TextSpeakerBase):
 				with self._lock:
 					if not self._is_speaking:
 						break
+					
+					# Don't check GetStatus when paused - wait for resume or stop
+					if self._is_paused:
+						print("🔄 Speech worker waiting while paused...")
+						continue
 				
-				status = self.tts.GetStatus("RunningState")
-				if status == 1: # Completed
-					break
+				# Only check status when not paused
+				try:
+					status = self.tts.GetStatus("RunningState")
+					print(f"🔍 NBSapi status: {status} (0=not speaking, 1=completed, 2=speaking)")
+					if status == 1: # Completed (and not paused)
+						with self._lock:
+							if not self._is_paused:  # Only break if truly completed, not paused
+								print("✅ Speech truly completed")
+								break
+							else:
+								print("🔄 Speech completed but paused - continue waiting")
+				except Exception as e:
+					print(f"❌ Error getting NBSapi status: {e}")
+					# If we can't get status, assume still speaking
 				
 				time.sleep(0.1)
 			
@@ -260,19 +281,23 @@ class NBSapiSpeaker(TextSpeakerBase):
 				
 	def pause(self) -> None:
 		"""Pause speech using NBSapi."""
+		print(f"🔄 NBSapi pause() called - current state: speaking={self._is_speaking}, paused={self._is_paused}")
 		try:
 			self.tts.Pause()
 			with self._lock:
 				self._is_paused = True
+			print(f"✅ NBSapi pause successful - new state: speaking={self._is_speaking}, paused={self._is_paused}")
 		except Exception as e:
 			print(f"❌ NBSapi pause error: {e}")
 			
 	def resume(self) -> None:
 		"""Resume speech using NBSapi."""
+		print(f"🔄 NBSapi resume() called - current state: speaking={self._is_speaking}, paused={self._is_paused}")
 		try:
 			self.tts.Resume()
 			with self._lock:
 				self._is_paused = False
+			print(f"✅ NBSapi resume successful - new state: speaking={self._is_speaking}, paused={self._is_paused}")
 		except Exception as e:
 			print(f"❌ NBSapi resume error: {e}")
 			
