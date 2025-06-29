@@ -196,3 +196,27 @@ config/settings.json.bak
 config/settings.json.backup
 logs/
 *.log
+
+# =========================
+# C# / .NET specific
+# =========================
+
+# Build outputs
+src/csharp/bin/
+src/csharp/obj/
+src/csharp/[Dd]ebug/
+src/csharp/[Rr]elease/
+
+# Visual Studio files
+src/csharp/*.user
+src/csharp/*.userosscache
+src/csharp/.vs/
+
+# .NET build artifacts
+src/csharp/*.pdb
+src/csharp/*.exe
+src/csharp/*.dll
+src/csharp/*.cache
+
+# Project-specific debug files
+src/csharp/debug.log

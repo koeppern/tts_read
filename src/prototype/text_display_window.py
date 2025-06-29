@@ -252,6 +252,16 @@ class TextDisplayWindow:
     def highlight_word(self, location, length):
         """Highlight the word at the given location (thread-safe)."""
         self.command_queue.put(("highlight_word", (location, length), {}))
+    
+    def is_visible(self):
+        """Check if the window is currently visible."""
+        try:
+            if self.window is None:
+                return False
+            # Check if window is not withdrawn (i.e., is visible)
+            return self.window.state() != 'withdrawn'
+        except Exception:
+            return False
 
     def _increase_font_size(self, event=None):
         """Increase the font size (GUI thread)."""

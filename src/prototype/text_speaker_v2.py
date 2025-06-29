@@ -194,6 +194,12 @@ class NBSapiSpeaker(TextSpeakerBase):
 		self.tts = NBSapi()
 		self._speech_thread = None
 		self._word_callback = None
+		
+		# Word tracking for resume functionality
+		self._current_words = []
+		self._current_word_index = 0
+		self._paused_word_index = 0
+		
 		print("✅ NBSapi speaker initialized")
 		
 	def speak(self, text: str, voice_name: str = "", speed: float = 1.0, word_callback: Optional[Callable[[int, int], None]] = None) -> None:
@@ -310,7 +316,7 @@ class NBSapiSpeaker(TextSpeakerBase):
 				# Only check status when not paused
 				try:
 					status = self.tts.GetStatus("RunningState")
-					if status_check_count % 10 == 0:  # Every second
+					if status_check_count % 50 == 0:  # Every 5 seconds
 						print(f"🔊 DEBUG: SAPI Status: {status} (0=speaking, 1=completed)")
 					
 					if status == 1: # Completed (and not paused)
@@ -341,13 +347,14 @@ class NBSapiSpeaker(TextSpeakerBase):
 			print("✅ DEBUG: Speech-Thread erfolgreich beendet")
 	
 	def _speak_with_word_highlighting_fallback(self, text: str) -> None:
-		"""Adaptive word highlighting synchronized with real SAPI speech progress."""
+		"""SAPI status-based word highlighting - synchronized with actual speech progress."""
 		import re
 		
-		print("🔄 Starting adaptive word highlighting...")
+		print("🔄 Starting SAPI status-based word highlighting...")
 		
 		# Split text into words and track positions
 		words = []
+		cumulative_chars = 0
 		for match in re.finditer(r'\S+', text):
 			word = match.group()
 			start_pos = match.start()
@@ -356,140 +363,190 @@ class NBSapiSpeaker(TextSpeakerBase):
 				'text': word,
 				'start': start_pos,
 				'end': end_pos,
-				'length': len(word)
+				'length': len(word),
+				'cumulative_start': cumulative_chars,
+				'cumulative_end': cumulative_chars + len(word)
 			})
+			cumulative_chars += len(word) + 1  # +1 for space
 		
 		print(f"📝 Found {len(words)} words for highlighting")
 		
+		# Store words for resume functionality
+		with self._lock:
+			self._current_words = words
+			self._current_word_index = 0
+		
 		# Start speaking the whole text
 		speech_start_time = time.time()
-		self.tts.Speak(text, 1)
+		print("🎙️ Starting SAPI speech...")
+		self.tts.Speak(text, 1)  # Asynchronous speech
 		
-		# Adaptive highlighting algorithm
-		self._adaptive_word_highlighting(words, speech_start_time, text)
+		# SAPI status-based highlighting algorithm
+		self._sapi_status_word_highlighting(words, speech_start_time, text)
 		
-	def _adaptive_word_highlighting(self, words, speech_start_time, full_text):
-		"""Adaptive word highlighting that learns from actual speech timing."""
+	def _sapi_status_word_highlighting(self, words, speech_start_time, full_text):
+		"""Hybrid word highlighting: time-based + SAPI monitoring + adaptive correction."""
 		
-		# Initial estimates based on typical speech patterns
-		# Average speaking rate: 150-200 words per minute
-		# Adjust based on SAPI rate settings if available
+		print("⏱️ Starting hybrid word highlighting (time + SAPI + adaptive)...")
+		
+		# Calculate dynamic speech rate with better estimation
 		try:
 			sapi_rate = self.tts.GetRate()  # SAPI rate: -10 to +10
-			# Convert SAPI rate to multiplier (rate 0 = normal, positive = faster)
-			rate_multiplier = 1.0 + (sapi_rate * 0.1)  # Rough approximation
-			base_chars_per_second = 12.0 * rate_multiplier  # Adaptive base rate
+			# More accurate WPM calculation based on SAPI documentation
+			# SAPI rate 0 = 180-200 WPM, each point = ±20 WPM  
+			base_wpm = 190 + (sapi_rate * 20)
+			words_per_second = base_wpm / 60.0
+			
+			# Account for text complexity and punctuation
+			text_complexity = self._calculate_text_complexity(full_text)
+			adjusted_wps = words_per_second * (1.0 - text_complexity * 0.3)  # Slow down for complex text
+			
 		except:
-			base_chars_per_second = 12.0  # Fallback
+			text_complexity = 0.0
+			adjusted_wps = 3.0  # Fallback: 180 WPM
 		
-		print(f"⏱️ Using adaptive speech rate: {base_chars_per_second:.1f} chars/sec")
+		print(f"📊 Speech rate: {base_wpm if 'base_wpm' in locals() else 'unknown'} WPM → {adjusted_wps:.1f} words/sec (complexity: {text_complexity:.2f})")
 		
-		# Track actual vs expected timing for learning
-		last_word_time = speech_start_time
-		cumulative_chars = 0
+		# Pre-calculate timing with variable intervals based on word length
+		for i, word in enumerate(words):
+			# Base timing on word count, not character count for better accuracy
+			base_time = speech_start_time + (i / adjusted_wps)
+			
+			# Add extra time for longer words and punctuation
+			word_penalty = len(word['text']) * 0.02  # 20ms per character for long words
+			punct_penalty = 0.1 if any(c in word['text'] for c in '.,!?;:') else 0
+			
+			word['expected_time'] = base_time + word_penalty + punct_penalty
+			
+		# Adaptive tracking variables
+		current_word_index = 0
+		last_check_time = speech_start_time
 		timing_corrections = []
+		sapi_completion_detected = False
 		
-		for i, word_info in enumerate(words):
-			# Check if we should stop
+		# Continuous monitoring loop
+		while current_word_index < len(words) and not sapi_completion_detected:
+			current_time = time.time()
+			
+			# Check speech state
 			with self._lock:
 				if not self._is_speaking:
-					print("🔚 DEBUG: Highlighting stopped - _is_speaking ist False")
+					print("🔚 Highlighting stopped - speech ended")
 					break
-				if self._is_paused:
-					print(f"⏸️ DEBUG: Highlighting pausiert bei Wort '{word_info['text']}'")
-			
-			# Handle pause separately outside the lock to avoid deadlocks
-			if self._is_paused:
-				pause_start = time.time()
-				pause_logged = False
-				while True:
-					with self._lock:
-						if not self._is_speaking:
-							print("🔚 DEBUG: Speech stopped während Pause")
-							return
-						if not self._is_paused:
-							break
-					
-					if not pause_logged:
-						print(f"⏸️ DEBUG: Warte auf Resume bei Wort '{word_info['text']}'...")
-						pause_logged = True
-					time.sleep(0.1)
 				
-				# Adjust speech start time for pause duration
-				pause_duration = time.time() - pause_start
-				speech_start_time += pause_duration
-				print(f"▶️ DEBUG: Resume nach {pause_duration:.1f}s Pause, Timeline angepasst")
+				# Handle pause state with precise timing adjustment
+				if self._is_paused:
+					pause_word = words[current_word_index]['text'] if current_word_index < len(words) else "end"
+					print(f"⏸️ Highlighting paused at word '{pause_word}'")
+					
+					pause_start = time.time()
+					while self._is_paused and self._is_speaking:
+						time.sleep(0.05)  # More responsive pause checking
+					
+					if not self._is_speaking:
+						print("🔚 Speech stopped during pause")
+						break
+					
+					# Precise timing adjustment for all remaining words
+					pause_duration = time.time() - pause_start
+					for j in range(current_word_index, len(words)):
+						words[j]['expected_time'] += pause_duration
+					
+					print(f"▶️ Resumed after {pause_duration:.1f}s pause - timeline adjusted")
+					continue
 			
-			# Calculate expected time for this word
-			cumulative_chars += word_info['length'] + 1  # +1 for space
-			
-			# Apply timing corrections from previous words
-			if timing_corrections:
-				# Use recent corrections to adjust rate
-				recent_corrections = timing_corrections[-3:]  # Last 3 corrections
-				avg_correction = sum(recent_corrections) / len(recent_corrections)
-				adjusted_rate = base_chars_per_second * avg_correction
-			else:
-				adjusted_rate = base_chars_per_second
-			
-			expected_word_time = speech_start_time + (cumulative_chars / adjusted_rate)
-			
-			# Wait until it's time for this word, but also check SAPI status
-			current_time = time.time()
-			wait_time = expected_word_time - current_time
-			
-			# Intelligent waiting: check SAPI status while waiting
-			wait_start = time.time()
-			while wait_time > 0 and self._is_speaking:
-				# Check if speech is still running
+			# SAPI completion check (every 200ms to reduce overhead)
+			if current_time - last_check_time >= 0.2:
 				try:
 					status = self.tts.GetStatus("RunningState")
 					if status == 1:  # Completed
-						# Speech finished earlier than expected
-						remaining_words = len(words) - i
-						if remaining_words > 1:
-							print(f"⚡ Speech completed early, highlighting remaining {remaining_words} words quickly")
-							# Highlight remaining words quickly
-							for j in range(i, len(words)):
-								remaining_word = words[j]
+						print(f"✅ SAPI completed early at word {current_word_index}/{len(words)}")
+						sapi_completion_detected = True
+						
+						# Highlight remaining words with smart pacing
+						remaining_words = len(words) - current_word_index
+						if remaining_words > 0:
+							interval = min(0.08, 1.0 / remaining_words)  # Adaptive interval, max 80ms
+							print(f"🔤 Quick-highlighting {remaining_words} remaining words ({interval*1000:.0f}ms intervals)")
+							
+							for i in range(current_word_index, len(words)):
+								word = words[i]
 								if self._word_callback:
-									self._word_callback(remaining_word['start'], remaining_word['length'])
-								time.sleep(0.1)  # Brief pause between quick highlights
-							return
+									self._word_callback(word['start'], word['length'])
+								time.sleep(interval)
 						break
+					last_check_time = current_time
 				except:
 					pass
+			
+			# Word highlighting based on timing
+			if current_word_index < len(words):
+				word = words[current_word_index]
 				
-				# Sleep in small increments to remain responsive
-				sleep_time = min(wait_time, 0.05)
-				time.sleep(sleep_time)
-				current_time = time.time()
-				wait_time = expected_word_time - current_time
+				# Check if it's time to highlight this word
+				if current_time >= word['expected_time']:
+					
+					# Highlight the word
+					try:
+						elapsed = current_time - speech_start_time
+						word_timing = current_time - word['expected_time']
+						print(f"🔤 [{elapsed:.1f}s] Highlighting: '{word['text']}' (timing: {word_timing:+.2f}s)")
+						
+						if self._word_callback:
+							self._word_callback(word['start'], word['length'])
+						
+						# Adaptive timing correction based on actual vs expected
+						expected_elapsed = word['expected_time'] - speech_start_time
+						actual_elapsed = current_time - speech_start_time
+						if expected_elapsed > 0:
+							timing_ratio = actual_elapsed / expected_elapsed
+							timing_corrections.append(timing_ratio)
+							
+							# Apply corrections to future words (running average)
+							if len(timing_corrections) >= 3:
+								avg_correction = sum(timing_corrections[-3:]) / 3
+								correction_factor = (avg_correction - 1.0) * 0.3  # Gentle correction
+								
+								# Adjust remaining words
+								for j in range(current_word_index + 1, len(words)):
+									adjustment = (words[j]['expected_time'] - speech_start_time) * correction_factor
+									words[j]['expected_time'] += adjustment
+						
+						current_word_index += 1
+						
+					except Exception as e:
+						print(f"❌ Word highlighting error: {e}")
+						current_word_index += 1
 			
-			# Highlight the word
-			actual_word_time = time.time()
-			try:
-				print(f"🔤 Highlighting: '{word_info['text']}'")
-				if self._word_callback:
-					self._word_callback(word_info['start'], word_info['length'])
-			except Exception as e:
-				print(f"❌ Word highlighting error: {e}")
-			
-			# Learn from actual timing for future corrections
-			if i > 0:  # Skip first word (no previous timing to compare)
-				expected_duration = expected_word_time - last_word_time
-				actual_duration = actual_word_time - last_word_time
-				if expected_duration > 0:
-					timing_ratio = actual_duration / expected_duration
-					timing_corrections.append(timing_ratio)
-					# Keep only recent corrections
-					if len(timing_corrections) > 10:
-						timing_corrections.pop(0)
-			
-			last_word_time = actual_word_time
+			# Smart sleep: sleep until next word or check interval
+			next_check = min(
+				words[current_word_index]['expected_time'] if current_word_index < len(words) else current_time + 1,
+				last_check_time + 0.2  # SAPI status check interval
+			)
+			sleep_time = max(0.01, min(next_check - current_time, 0.1))  # 10ms minimum, 100ms maximum
+			time.sleep(sleep_time)
 		
-		print("✅ Adaptive word highlighting completed")
-				
+		print("✅ Hybrid word highlighting completed")
+	
+	def _calculate_text_complexity(self, text):
+		"""Calculate text complexity factor (0.0 = simple, 1.0 = complex)."""
+		if not text:
+			return 0.0
+		
+		# Count complexity indicators
+		punct_count = sum(1 for c in text if c in '.,!?;:')
+		digit_count = sum(1 for c in text if c.isdigit())
+		upper_count = sum(1 for c in text if c.isupper())
+		
+		# Calculate ratios
+		punct_ratio = punct_count / len(text)
+		digit_ratio = digit_count / len(text)
+		upper_ratio = upper_count / len(text)
+		
+		# Combine factors (weighted)
+		complexity = (punct_ratio * 0.4 + digit_ratio * 0.3 + upper_ratio * 0.3)
+		return min(complexity, 1.0)  # Cap at 1.0
+	
 	def pause(self) -> None:
 		"""Pause speech using NBSapi."""
 		print("⏸️ DEBUG: Pause-Befehl erhalten")
@@ -502,6 +559,16 @@ class NBSapiSpeaker(TextSpeakerBase):
 					print("⚠️ DEBUG: Bereits pausiert - Pause ignoriert")
 					return
 			
+			# Save current word index for resume
+			with self._lock:
+				self._paused_word_index = self._current_word_index
+				print(f"📍 DEBUG: Pausiert bei Wort-Index {self._paused_word_index}")
+				
+				# Find word context for better resume
+				if self._current_words and self._paused_word_index < len(self._current_words):
+					current_word = self._current_words[self._paused_word_index]['text']
+					print(f"📝 DEBUG: Pausiert bei Wort: '{current_word}'")
+			
 			print("⏸️ DEBUG: Pausiere NBSapi...")
 			self.tts.Pause()
 			with self._lock:
@@ -511,7 +578,7 @@ class NBSapiSpeaker(TextSpeakerBase):
 			print(f"❌ DEBUG: NBSapi pause error: {e}")
 			
 	def resume(self) -> None:
-		"""Resume speech using NBSapi."""
+		"""Resume speech using NBSapi with one-word-back functionality."""
 		print("▶️ DEBUG: Resume-Befehl erhalten")
 		try:
 			with self._lock:
@@ -522,11 +589,44 @@ class NBSapiSpeaker(TextSpeakerBase):
 					print("⚠️ DEBUG: Nicht pausiert - Resume ignoriert")
 					return
 			
-			print("▶️ DEBUG: Setze NBSapi fort...")
+			# Check if we can do intelligent resume with word-back
+			with self._lock:
+				if self._current_words and self._paused_word_index > 0:
+					# Calculate resume position: one word back
+					resume_word_index = max(0, self._paused_word_index - 1)
+					resume_word = self._current_words[resume_word_index]
+					
+					print(f"🔄 DEBUG: Intelligenter Resume - gehe ein Wort zurück")
+					print(f"📍 DEBUG: Pausiert bei Index {self._paused_word_index}, Resume bei Index {resume_word_index}")
+					print(f"📝 DEBUG: Resume-Wort: '{resume_word['text']}'")
+					
+					# Extract text from resume position
+					text_from_resume = self._current_text[resume_word['start']:]
+					
+					# Stop current speech and restart from earlier position
+					print("🛑 DEBUG: Stoppe aktuelles SAPI für intelligenten Resume...")
+					self.tts.Stop()
+					
+					# Update word index for highlighting
+					self._current_word_index = resume_word_index
+					
+					# Restart speech from the earlier position
+					print(f"🎙️ DEBUG: Starte neu ab Wort '{resume_word['text']}'...")
+					self.tts.Speak(text_from_resume, 1)
+					
+					with self._lock:
+						self._is_paused = False
+					print("✅ DEBUG: Intelligenter Resume erfolgreich")
+					return
+				else:
+					print("⚠️ DEBUG: Kein intelligenter Resume möglich - verwende Standard-Resume")
+			
+			# Fallback to standard resume
+			print("▶️ DEBUG: Setze NBSapi fort (Standard)...")
 			self.tts.Resume()
 			with self._lock:
 				self._is_paused = False
-			print("✅ DEBUG: Resume erfolgreich")
+			print("✅ DEBUG: Standard-Resume erfolgreich")
 		except Exception as e:
 			print(f"❌ DEBUG: NBSapi resume error: {e}")
 			

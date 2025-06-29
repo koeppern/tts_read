@@ -167,11 +167,6 @@ class VorleseApp:
             return
             
         print(f"✅ DEBUG: Text erhalten: {len(text)} Zeichen")
-        print("🖥️ DEBUG: Setze Text im Display-Fenster...")
-        self.display_window.set_text(text)
-        
-        print("🖥️ DEBUG: Zeige Display-Fenster...")
-        self.display_window.show()
 
         speaker = self.speakers.get(action)
         if not speaker:
@@ -182,7 +177,20 @@ class VorleseApp:
         speed = action_config.get("speed", 1.0)
         
         print(f"🔊 DEBUG: Starte Vorlesen mit Voice: '{voice_name}', Speed: {speed}")
-        speaker.speak(text, voice_name, speed, self.display_window.highlight_word)
+        # Falls das Display-Fenster bereits geöffnet ist, setze Text und verwende Word-Highlighting
+        # Ansonsten verwende kein Word-Highlighting (Fenster bleibt geschlossen)
+        try:
+            # Prüfe ob das Fenster bereits sichtbar ist
+            if hasattr(self.display_window, 'is_visible') and self.display_window.is_visible():
+                print("🖥️ DEBUG: Display-Fenster bereits geöffnet - setze Text und aktiviere Highlighting")
+                self.display_window.set_text(text)
+                speaker.speak(text, voice_name, speed, self.display_window.highlight_word)
+            else:
+                print("🖥️ DEBUG: Display-Fenster nicht geöffnet - Vorlesen ohne Highlighting")
+                speaker.speak(text, voice_name, speed, None)
+        except Exception as e:
+            print(f"⚠️ DEBUG: Fehler bei Display-Fenster-Check: {e} - Vorlesen ohne Highlighting")
+            speaker.speak(text, voice_name, speed, None)
         
     def _on_pause_resume_hotkey(self):
         """Handle pause/resume hotkey press."""

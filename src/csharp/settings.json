@@ -1,0 +1,32 @@
+
+{
+  "actions": {
+    "action_1": {
+      "name": "Sprecher 1",
+      "enabled": true,
+      "engine": "SAPI",
+      "voice": "",
+      "speed": 1.0
+    },
+    "action_2": {
+      "name": "Sprecher 2",
+      "enabled": true,
+      "engine": "SAPI",
+      "voice": "",
+      "speed": 1.2
+    },
+    "action_pause": {
+      "name": "Pause/Resume",
+      "enabled": true
+    },
+    "action_show_text": {
+        "name": "Show Text Window",
+        "enabled": true
+    }
+  },
+  "hotkeys": {
+    "action_1": "Control+Numpad5",
+    "action_2": "Control+2",
+    "action_pause": "Control+3"
+  }
+}
